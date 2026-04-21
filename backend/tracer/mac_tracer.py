@@ -96,20 +96,39 @@ class NetworkTracer:
 
             if r1_client_info and not isinstance(r1_client_info, Exception):
                 # ── Wireless client confirmed via R1 ──
+                logger.info(f"[wireless] r1_client_info keys: {list(r1_client_info.keys())}")
+                logger.info(f"[wireless] r1_client_info: {r1_client_info}")
+
                 # Check for a Ruckus ICX switch sitting between the Cisco edge and the AP
                 ruckus_sw_hop = await self._build_ruckus_sw_from_edge(edge, len(result.path))
                 if ruckus_sw_hop:
+                    logger.info(f"[wireless] Ruckus ICX hop built: {ruckus_sw_hop.device_name}")
                     result.path.append(ruckus_sw_hop)
+                else:
+                    logger.info("[wireless] No Ruckus ICX switch detected on access port")
 
-                ap_id = r1_client_info.get("apId") or r1_client_info.get("connectedApId")
+                ap_id = (
+                    r1_client_info.get("apId")
+                    or r1_client_info.get("connectedApId")
+                    or r1_client_info.get("ap_id")
+                    or r1_client_info.get("accessPointId")
+                )
+                logger.info(f"[wireless] ap_id resolved to: {ap_id!r}")
                 if ap_id:
                     ap_hop = await self._build_ap_hop(str(ap_id), len(result.path))
+                    logger.info(f"[wireless] _build_ap_hop returned: {ap_hop}")
                     if ap_hop:
                         result.path.append(ap_hop)
+                else:
+                    logger.warning("[wireless] No AP ID found in r1_client_info — AP hop skipped")
 
                 result.path.append(self._end_hop_wireless(r1_client_info, mac, resolution.ip, len(result.path)))
             else:
-                # ── Not found in R1 — check if the access port has an AP via CDP/LLDP ──
+                # ── Not found in R1 as wireless — check access port CDP/LLDP for AP ──
+                logger.info(f"[wireless] r1_client_info is None — falling back to CDP/LLDP AP detection")
+                access_port = edge.get("mac_entry").port if edge.get("mac_entry") else None
+                all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
+                logger.info(f"[wireless] edge access_port={access_port}, all_cdp+lldp neighbors: {[(getattr(n,'local_port',''),getattr(n,'remote_device','')) for n in all_nbrs]}")
                 ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
                 if ap_hop:
                     result.path.append(ap_hop)
@@ -553,6 +572,7 @@ class NetworkTracer:
     async def _build_ap_hop(self, ap_id: str, order: int) -> Optional[Hop]:
         try:
             ap = await self.r1.get_ap_by_id(ap_id)
+            logger.info(f"[ap_hop] get_ap_by_id({ap_id!r}) → {ap}")
             if not ap:
                 return None
             name  = ap.get("name") or ap.get("apName") or f"AP-{ap_id}"
@@ -620,6 +640,7 @@ class NetworkTracer:
 
         # all_cdp/all_lldp are always collected; filter to the access port
         all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
+        logger.info(f"[ruckus_sw] access_port={access_port}, all neighbors: {[(getattr(n,'local_port',''),getattr(n,'remote_device',''),getattr(n,'platform','')[:40]) for n in all_nbrs]}")
         access_nbr = next(
             (n for n in all_nbrs if getattr(n, "local_port", "") == access_port),
             None,
@@ -627,6 +648,7 @@ class NetworkTracer:
         # Fallback to per-port neighbor if available (requires neighbor_info option)
         if not access_nbr:
             access_nbr = edge.get("cdp_neighbor") or edge.get("lldp_neighbor")
+        logger.info(f"[ruckus_sw] access_nbr: device={getattr(access_nbr,'remote_device','None')} platform={getattr(access_nbr,'platform','')[:40]}")
         if not access_nbr:
             return None
 
