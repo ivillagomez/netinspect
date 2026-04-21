@@ -125,10 +125,18 @@ class NetworkTracer:
                 result.path.append(self._end_hop_wireless(r1_client_info, mac, resolution.ip, len(result.path)))
             else:
                 # ── Not found in R1 as wireless — check access port CDP/LLDP for AP ──
-                logger.info(f"[wireless] r1_client_info is None — falling back to CDP/LLDP AP detection")
+                logger.info("[wireless] r1_client_info is None — falling back to CDP/LLDP AP detection")
                 access_port = edge.get("mac_entry").port if edge.get("mac_entry") else None
                 all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
-                logger.info(f"[wireless] edge access_port={access_port}, all_cdp+lldp neighbors: {[(getattr(n,'local_port',''),getattr(n,'remote_device','')) for n in all_nbrs]}")
+                logger.info(
+                    "[wireless] edge access_port=%s, neighbors: %s",
+                    access_port,
+                    [(
+                        getattr(n, "local_port", ""),
+                        getattr(n, "remote_device", ""),
+                        (getattr(n, "platform", "") or getattr(n, "system_description", ""))[:60],
+                    ) for n in all_nbrs]
+                )
                 ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
                 if ap_hop:
                     result.path.append(ap_hop)
@@ -739,6 +747,12 @@ class NetworkTracer:
                 + " " + getattr(nbr, "system_description", "")
             ).lower()
 
+            logger.info(
+                "[check_if_ap] neighbor=%r combined=%r",
+                getattr(nbr, "remote_device", ""),
+                combined[:120],
+            )
+
             is_ruckus = any(kw in combined for kw in (
                 "ruckus",
                 # Indoor APs
@@ -753,6 +767,7 @@ class NetworkTracer:
             is_icx    = "icx" in combined  # ICX = switch, not AP
 
             if not is_ruckus or is_icx:
+                logger.info("[check_if_ap] skipping %r — is_ruckus=%s is_icx=%s", getattr(nbr, "remote_device", ""), is_ruckus, is_icx)
                 continue  # not a Ruckus AP
 
             nbr_ip  = getattr(nbr, "remote_ip", None)
