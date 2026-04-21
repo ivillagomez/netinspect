@@ -42,6 +42,7 @@ class Issue(BaseModel):
     category: str
     message: str
     detail: Optional[str] = None
+    device: Optional[str] = None
 
 
 class TestResult(BaseModel):

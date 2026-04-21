@@ -129,6 +129,8 @@ class CiscoSwitch:
                     if options.poe:
                         result["poe_status"] = self._get_poe_status(port)
 
+                result["system_mtu"] = self._get_system_mtu()
+
                 # Uplink port error counters — checks health of links toward upstream devices
                 # (Ruckus switch errors are visible here on the Cisco side of that link)
                 result["uplink_details"] = self._get_uplink_details(
@@ -442,6 +444,24 @@ class CiscoSwitch:
         except Exception as e:
             logger.debug(f"[{self.name}] poe error: {e}")
         return None
+
+    def _get_system_mtu(self) -> Dict:
+        """show system mtu — global MTU setting (Catalyst switches)."""
+        try:
+            out = self._cmd("show system mtu")
+            result = {}
+            m = re.search(r"System MTU size is (\d+)", out)
+            if m:
+                result["system_mtu"] = int(m.group(1))
+            m = re.search(r"System Jumbo MTU size is (\d+)", out)
+            if m:
+                result["jumbo_mtu"] = int(m.group(1))
+            m = re.search(r"Routing MTU size is (\d+)", out)
+            if m:
+                result["routing_mtu"] = int(m.group(1))
+            return result
+        except Exception:
+            return {}
 
     def _get_etherchannel_members(self, port: str) -> List[Dict]:
         """show etherchannel <group> summary — member ports and bundle state for a Po interface."""

@@ -340,11 +340,11 @@ body {
   width: 60px; height: 60px;
   border-radius: 16px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 26px;
   border: 2px solid;
   position: relative;
   transition: box-shadow var(--transition);
 }
+.node-icon svg { width: 28px; height: 28px; }
 .node-icon:hover { box-shadow: 0 0 20px currentColor; }
 
 .node-icon.fw        { background: rgba(249,115,22,0.12); border-color: rgba(249,115,22,0.4); color: var(--fw-color); }
@@ -423,6 +423,7 @@ body {
 .issue-sev.warning  { background: rgba(245,158,11,0.2); color: var(--warn); }
 .issue-sev.info     { background: rgba(96,165,250,0.2); color: var(--info); }
 .issue-body { flex: 1; }
+.issue-device { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 2px; }
 .issue-msg  { font-size: 13px; font-weight: 500; }
 .issue-detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
@@ -496,9 +497,10 @@ body {
 .hop-icon {
   width: 38px; height: 38px; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 18px; flex-shrink: 0;
+  flex-shrink: 0;
   border: 1px solid;
 }
+.hop-icon svg { width: 18px; height: 18px; }
 .hop-title-group { flex: 1; min-width: 0; }
 .hop-title { font-size: 14px; font-weight: 600; }
 .hop-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 1px; }

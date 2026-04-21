@@ -137,6 +137,18 @@ class RuckusR1Client:
                 return sw
         return None
 
+    async def get_switch_by_name_or_ip(self, name: str = "", ip: str = "") -> Optional[Dict]:
+        """Find an R1-managed switch by hostname fragment or IP address."""
+        name_lower = name.lower()
+        for sw in await self.get_all_switches():
+            sw_name = (sw.get("name") or sw.get("switchName") or "").lower()
+            sw_ip   = sw.get("ip") or sw.get("ipAddress") or ""
+            if name_lower and name_lower in sw_name:
+                return sw
+            if ip and ip == sw_ip:
+                return sw
+        return None
+
     async def get_switch_ports(self, switch_id: str) -> List[Dict]:
         data = await self._get(f"/v1/switches/{switch_id}/ports")
         return self._extract_list(data)

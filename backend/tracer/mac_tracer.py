@@ -236,10 +236,31 @@ class NetworkTracer:
                         coming_from_port = n.local_port   # port on beyond switch facing intermediate
                         break
 
+            # Enrich intermediate hop with R1 data (model, ports) when CDP/LLDP is incomplete
+            r1_sw = await self.r1.get_switch_by_name_or_ip(name=neighbor_name, ip=neighbor_ip or "")
+            if r1_sw and (not inter_ingress or not inter_egress):
+                sw_id = r1_sw.get("id") or r1_sw.get("switchId")
+                if sw_id:
+                    ports = await self.r1.get_switch_ports(str(sw_id))
+                    uplink_ports = [
+                        p for p in ports
+                        if str(p.get("portType", "")).upper() in ("TRUNK", "UPLINK")
+                        or p.get("isUplink")
+                    ]
+                    access_ports = [
+                        p for p in ports
+                        if str(p.get("portType", "")).upper() == "ACCESS"
+                    ]
+                    if not inter_egress and uplink_ports:
+                        inter_egress = str(uplink_ports[0].get("portName") or uplink_ports[0].get("name") or "")
+                    if not inter_ingress and access_ports:
+                        inter_ingress = str(access_ports[0].get("portName") or access_ports[0].get("name") or "")
+
             inter_hop = self._build_intermediate_hop(
                 uplink, len(hops_raw) + 1,
                 ingress_port=inter_ingress,
                 egress_port=inter_egress,
+                r1_data=r1_sw,
             )
             hops_raw.append({
                 "hop": inter_hop,
@@ -445,6 +466,7 @@ class NetworkTracer:
                 "error": raw.get("error"),
                 "etherchannel_members": raw.get("etherchannel_members", []),
                 "uplink_details": raw.get("uplink_details", {}),
+                "system_mtu": raw.get("system_mtu", {}),
             },
         )
 
@@ -454,8 +476,9 @@ class NetworkTracer:
         order: int,
         ingress_port: Optional[str] = None,
         egress_port: Optional[str] = None,
+        r1_data: Optional[Dict] = None,
     ) -> Hop:
-        """Build a hop for a device we can't SSH into (identified via CDP/LLDP)."""
+        """Build a hop for a device we can't SSH into (identified via CDP/LLDP and/or R1)."""
         name     = getattr(neighbor, "remote_device", "Unknown")
         ip       = getattr(neighbor, "remote_ip", None)
         platform = getattr(neighbor, "platform", "") or getattr(neighbor, "system_description", "")
@@ -463,6 +486,16 @@ class NetworkTracer:
         vendor, model = _parse_vendor_model(name, platform)
         device_type = DeviceType.RUCKUS_SWITCH if "ruckus" in vendor.lower() else DeviceType.UNKNOWN
         if "icx" in platform.lower() or "icx" in name.lower():
+            device_type = DeviceType.RUCKUS_SWITCH
+            if not vendor:
+                vendor = "Ruckus"
+
+        # Enrich from R1 if available
+        if r1_data:
+            if not model:
+                model = r1_data.get("model") or r1_data.get("modelName") or ""
+            if not ip:
+                ip = r1_data.get("ip") or r1_data.get("ipAddress")
             device_type = DeviceType.RUCKUS_SWITCH
             if not vendor:
                 vendor = "Ruckus"
@@ -476,7 +509,7 @@ class NetworkTracer:
             model=model,
             ingress_port=ingress_port,
             egress_port=egress_port,
-            raw_data={"platform": platform, "source": "cdp_lldp"},
+            raw_data={"platform": platform, "source": "cdp_lldp", "r1_data": r1_data or {}},
         )
 
     def _build_r1_switch_hop(self, r1_switch_info: Dict, order: int) -> Hop:

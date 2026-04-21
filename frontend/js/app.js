@@ -1,14 +1,60 @@
 'use strict';
 
+// ── Device icons (Lucide-style inline SVG paths) ──────────────
+const ICONS = {
+  firewall: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    <path d="M9.5 9a2.5 2.5 0 0 1 5 0v.5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2V9z"/>
+  </svg>`,
+  cisco_switch: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="4" width="20" height="6" rx="1"/>
+    <rect x="2" y="14" width="20" height="6" rx="1"/>
+    <circle cx="6" cy="7" r="1" fill="currentColor"/>
+    <circle cx="6" cy="17" r="1" fill="currentColor"/>
+    <line x1="10" y1="7" x2="18" y2="7"/>
+    <line x1="10" y1="17" x2="18" y2="17"/>
+  </svg>`,
+  ruckus_switch: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="6" width="20" height="12" rx="2"/>
+    <line x1="6" y1="10" x2="6" y2="14"/>
+    <line x1="9" y1="10" x2="9" y2="14"/>
+    <line x1="12" y1="10" x2="12" y2="14"/>
+    <line x1="15" y1="10" x2="15" y2="14"/>
+    <line x1="18" y1="10" x2="18" y2="14"/>
+  </svg>`,
+  ruckus_ap: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+    <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+    <circle cx="12" cy="20" r="1" fill="currentColor"/>
+  </svg>`,
+  wireless_client: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9"/>
+    <path d="M4 16h16l1.28 2.55A1 1 0 0 1 20.38 20H3.62a1 1 0 0 1-.9-1.45L4 16z"/>
+    <path d="M9.5 9.5a3.5 3.5 0 0 1 5 0"/>
+    <circle cx="12" cy="13" r="1" fill="currentColor"/>
+  </svg>`,
+  wired_client: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="3" width="20" height="14" rx="2"/>
+    <line x1="8" y1="21" x2="16" y2="21"/>
+    <line x1="12" y1="17" x2="12" y2="21"/>
+  </svg>`,
+  unknown: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+    <line x1="12" y1="17" x2="12.01" y2="17"/>
+  </svg>`,
+};
+
 // ── Constants ─────────────────────────────────────────────────
 const DEVICE_META = {
-  firewall:         { icon: '🔥', label: 'Firewall',      cls: 'fw'       },
-  cisco_switch:     { icon: '🔌', label: 'Cisco Switch',  cls: 'cisco_sw' },
-  ruckus_switch:    { icon: '🌐', label: 'Ruckus Switch', cls: 'r1_sw'    },
-  ruckus_ap:        { icon: '📡', label: 'Access Point',  cls: 'ap'       },
-  wireless_client:  { icon: '💻', label: 'WiFi Client',   cls: 'client'   },
-  wired_client:     { icon: '🖥️', label: 'Wired Device',  cls: 'client'   },
-  unknown:          { icon: '❓', label: 'Unknown',       cls: 'unknown'  },
+  firewall:         { icon: ICONS.firewall,        label: 'Firewall',      cls: 'fw'       },
+  cisco_switch:     { icon: ICONS.cisco_switch,    label: 'Cisco Switch',  cls: 'cisco_sw' },
+  ruckus_switch:    { icon: ICONS.ruckus_switch,   label: 'Ruckus Switch', cls: 'r1_sw'    },
+  ruckus_ap:        { icon: ICONS.ruckus_ap,       label: 'Access Point',  cls: 'ap'       },
+  wireless_client:  { icon: ICONS.wireless_client, label: 'WiFi Client',   cls: 'client'   },
+  wired_client:     { icon: ICONS.wired_client,    label: 'Wired Device',  cls: 'client'   },
+  unknown:          { icon: ICONS.unknown,         label: 'Unknown',       cls: 'unknown'  },
 };
 
 // ── Init ──────────────────────────────────────────────────────
@@ -189,7 +235,7 @@ function renderPath(path) {
 
     const iconWrap = document.createElement('div');
     iconWrap.className = `node-icon ${meta.cls}`;
-    iconWrap.textContent = meta.icon;
+    iconWrap.innerHTML = meta.icon;
 
     if (hasCrit || hasWarn) {
       const dot = document.createElement('span');
@@ -265,6 +311,7 @@ function renderIssues(issues) {
     item.innerHTML = `
       <span class="issue-sev ${issue.severity}">${issue.severity}</span>
       <div class="issue-body">
+        ${issue.device ? `<div class="issue-device">${esc(issue.device)}</div>` : ''}
         <div class="issue-msg">${esc(issue.message)}</div>
         ${issue.detail ? `<div class="issue-detail">${esc(issue.detail)}</div>` : ''}
       </div>`;
@@ -335,7 +382,7 @@ function buildHopCard(hop, idx) {
 
   const hopIcon = document.createElement('div');
   hopIcon.className = `hop-icon ${meta.cls}`;
-  hopIcon.textContent = meta.icon;
+  hopIcon.innerHTML = meta.icon;
   hopIcon.style.borderColor = getDeviceColor(hop.device_type);
   hopIcon.style.background  = getDeviceColor(hop.device_type, 0.1);
   hopIcon.style.color       = getDeviceColor(hop.device_type);
@@ -412,7 +459,7 @@ function buildHopCard(hop, idx) {
     const d = hop.interface_details;
     body.innerHTML += `<div class="subsection-title">Interface Details</div>`;
     body.appendChild(buildDetailGrid([
-      ['MTU',            d.mtu ? d.mtu + ' bytes' : '–', d.mtu && d.mtu !== 1500 ? 'warn' : ''],
+      ['MTU',            fmtMtu(d.mtu, hop.raw_data), d.mtu && d.mtu !== 1500 ? 'warn' : ''],
       ['Input Errors',   d.input_errors,  d.input_errors > 0   ? 'warn' : 'ok'],
       ['Output Errors',  d.output_errors, d.output_errors > 0  ? 'warn' : 'ok'],
       ['CRC Errors',     d.crc_errors,    d.crc_errors > 0     ? 'crit' : 'ok'],
@@ -607,6 +654,15 @@ function rssiColor(rssi) {
   if (v >= -60) return 'ok';
   if (v >= -75) return 'warn';
   return 'crit';
+}
+
+function fmtMtu(mtu, rawData) {
+  if (!mtu) return '–';
+  const sysMtu = rawData && rawData.system_mtu && rawData.system_mtu.system_mtu;
+  const jumbo  = rawData && rawData.system_mtu && rawData.system_mtu.jumbo_mtu;
+  if (sysMtu && mtu === sysMtu) return `${mtu} bytes (global default)`;
+  if (jumbo  && mtu === jumbo)  return `${mtu} bytes (jumbo global)`;
+  return `${mtu} bytes (interface override)`;
 }
 
 function fmtBps(bps) {

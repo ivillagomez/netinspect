@@ -271,6 +271,11 @@ def run_all_checks(
         else:
             hop_tests.append(_skip("PoE"))
 
+        # Tag every issue with the device it came from
+        for issue in hop.issues:
+            if not issue.device:
+                issue.device = hop.device_name
+
         all_issues.extend(hop.issues)
         hop.tests = hop_tests
         all_tests.extend(hop_tests)
