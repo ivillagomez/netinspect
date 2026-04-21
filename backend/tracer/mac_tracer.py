@@ -142,7 +142,32 @@ class NetworkTracer:
                     result.path.append(ap_hop)
                     result.path.append(self._end_hop_wireless(None, mac, resolution.ip, len(result.path)))
                 else:
-                    result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
+                    # If the edge switch's access port has a CDP/LLDP neighbor that
+                    # matches the last hop in the path (a non-Cisco intermediate switch,
+                    # e.g. a Ruckus ICX), the client is almost certainly wireless —
+                    # R1 is just unavailable so we can't confirm the AP.
+                    _ap_nbr_name = ""
+                    if access_port and all_nbrs:
+                        _ap_nbr = next(
+                            (n for n in all_nbrs
+                             if getattr(n, "local_port", "") == access_port),
+                            None,
+                        )
+                        _ap_nbr_name = getattr(_ap_nbr, "remote_device", "") if _ap_nbr else ""
+                    _behind_intermediate = (
+                        _ap_nbr_name
+                        and last_sw is not None
+                        and last_sw.device_name == _ap_nbr_name
+                        and last_sw.device_type != DeviceType.CISCO_SWITCH
+                    )
+                    if _behind_intermediate:
+                        logger.info(
+                            "[wireless] Client behind intermediate switch %r — treating as wireless",
+                            _ap_nbr_name,
+                        )
+                        result.path.append(self._end_hop_wireless(None, mac, resolution.ip, len(result.path)))
+                    else:
+                        result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
 
         elif r1_client_info and not isinstance(r1_client_info, Exception):
             # ── Wireless client found via R1 but no Cisco edge switch found ──
@@ -319,6 +344,51 @@ class NetworkTracer:
                 current = beyond
             else:
                 break
+
+        # ── Dead-end branch exclusion ──────────────────────────────────────────
+        # If the edge switch's access port connects to a network device (another
+        # switch) that already appears elsewhere in the hop chain, then the edge
+        # switch is a side branch — not the real traffic path.  Remove it.
+        #
+        # Classic case: Ruckus ICX is multi-homed to switch-fortigate AND to
+        # TV-Switch.  TV-Switch sees the wireless client MAC (via ICX) and gets
+        # chosen as edge, but the true path is: FG → switch-fortigate → ICX → AP.
+        # TV-Switch's access port (Gi0/4) has ICX as its CDP/LLDP neighbor, and
+        # ICX is already in the hop chain as an intermediate hop → exclude TV-Switch.
+        if len(hops_raw) > 1:
+            first = hops_raw[0]
+            if not first.get("is_intermediate") and first.get("is_edge"):
+                edge_raw    = first["raw"]
+                edge_name   = edge_raw.get("hostname") or edge_raw.get("switch", "")
+                access_port = first.get("access_port")
+                if access_port:
+                    all_nbrs = _dedup_neighbors(
+                        edge_raw.get("all_cdp", []) + edge_raw.get("all_lldp", [])
+                    )
+                    access_port_nbr_names = {
+                        getattr(n, "remote_device", "")
+                        for n in all_nbrs
+                        if getattr(n, "local_port", "") == access_port
+                        and getattr(n, "remote_device", "")
+                    }
+                    if access_port_nbr_names:
+                        in_path: set = set()
+                        for entry in hops_raw[1:]:
+                            if entry.get("is_intermediate"):
+                                hop = entry.get("hop")
+                                if hop:
+                                    in_path.add(hop.device_name)
+                            else:
+                                r = entry.get("raw", {})
+                                in_path.add(r.get("hostname") or r.get("switch", ""))
+                        in_path.discard("")
+                        if access_port_nbr_names.issubset(in_path):
+                            logger.info(
+                                "[walk_path] Excluding dead-end edge %s — access port %s "
+                                "neighbor(s) %s already in path %s",
+                                edge_name, access_port, access_port_nbr_names, in_path,
+                            )
+                            hops_raw = hops_raw[1:]
 
         # Reverse so path reads FG → core → access (hops_raw is edge → core)
         hops_raw.reverse()
