@@ -531,6 +531,43 @@ function buildHopCard(hop, idx) {
     ]));
   }
 
+  // AP switch uplink — port status, errors and PoE sourced from the connecting Cisco port
+  if (hop.device_type === 'ruckus_ap' && hop.raw_data && hop.raw_data.switch_port) {
+    const rd = hop.raw_data;
+    body.innerHTML += `<div class="subsection-title">Switch Uplink Port — ${esc(rd.switch_port)}</div>`;
+
+    if (rd.switch_int_status) {
+      const s = rd.switch_int_status;
+      body.appendChild(buildDetailGrid([
+        ['Status', s.status || '–', statusColor(s.status)],
+        ['Speed',  s.speed  || '–'],
+        ['Duplex', s.duplex || '–', s.duplex && s.duplex.includes('half') ? 'warn' : 'ok'],
+        ['VLAN',   s.vlan   || '–'],
+      ]));
+    }
+
+    if (rd.switch_int_details) {
+      const d = rd.switch_int_details;
+      body.appendChild(buildDetailGrid([
+        ['Input Errors',  d.input_errors,  d.input_errors  > 0 ? 'warn' : 'ok'],
+        ['Output Errors', d.output_errors, d.output_errors > 0 ? 'warn' : 'ok'],
+        ['CRC Errors',    d.crc_errors,    d.crc_errors    > 0 ? 'crit' : 'ok'],
+        ['Runts',         d.runts,         d.runts         > 0 ? 'warn' : 'ok'],
+      ]));
+    }
+
+    if (rd.switch_poe) {
+      const p = rd.switch_poe;
+      body.innerHTML += `<div class="subsection-title">PoE</div>`;
+      body.appendChild(buildDetailGrid([
+        ['Status', p.operational || '–', p.operational && p.operational.toLowerCase().includes('deny') ? 'crit' : 'ok'],
+        ['Power',  p.power_watts ? p.power_watts + ' W' : '–'],
+        ['Max',    p.max_watts   ? p.max_watts   + ' W' : '–'],
+        ['Class',  p.poe_class   || '–'],
+      ]));
+    }
+  }
+
   // Wireless info
   if (hop.device_type === 'wireless_client' && hop.raw_data) {
     const rd = hop.raw_data;

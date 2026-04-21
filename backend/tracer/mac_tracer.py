@@ -781,6 +781,19 @@ class NetworkTracer:
             if m:
                 model = m.group(1)
             logger.info(f"[check_if_ap] R1 unavailable — building AP hop from LLDP: name={name!r} model={model!r} ip={nbr_ip!r}")
+
+            # AP's own LLDP port ID — Ruckus often uses dot-notation MAC (0033.5835.fbf0)
+            # as port ID; filter those out since they're meaningless as a port label.
+            ap_own_port = getattr(nbr, "remote_port", "") or ""
+            if re.match(r'^[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}$', ap_own_port, re.IGNORECASE):
+                ap_own_port = ""
+
+            # Forward the connecting switch port's interface data so the UI can show
+            # link status, error counters, and PoE without SSH access to the AP itself.
+            sw_int_status  = edge.get("int_status")
+            sw_int_details = edge.get("int_details")
+            sw_poe         = edge.get("poe_status")
+
             return Hop(
                 order=order,
                 device_type=DeviceType.RUCKUS_AP,
@@ -788,7 +801,15 @@ class NetworkTracer:
                 device_ip=nbr_ip,
                 vendor="Ruckus",
                 model=model,
-                raw_data={"source": "lldp", "system_description": sys_desc},
+                ingress_port=ap_own_port or None,
+                raw_data={
+                    "source": "lldp",
+                    "system_description": sys_desc,
+                    "switch_port":        access_port,
+                    "switch_int_status":  sw_int_status.model_dump()  if sw_int_status  else None,
+                    "switch_int_details": sw_int_details.model_dump() if sw_int_details else None,
+                    "switch_poe":         sw_poe.model_dump()         if sw_poe         else None,
+                },
             )
         return None
 
