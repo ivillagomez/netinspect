@@ -44,7 +44,22 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     global _config
     if _config is not None:
         return _config
-    config_path = path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
+    # Allow override via environment variable (useful for Docker / CI)
+    env_path = os.environ.get("NETWORK_TRACER_CONFIG")
+    if env_path:
+        path = env_path
+    # Search order: absolute path → cwd → script directory → /app (Docker)
+    candidates = [path] if os.path.isabs(path) else [
+        os.path.join(os.getcwd(), path),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), path),
+        os.path.join("/app", path),
+    ]
+    config_path = next((p for p in candidates if os.path.isfile(p)), None)
+    if not config_path:
+        raise FileNotFoundError(
+            f"config.yaml not found. Searched: {candidates}\n"
+            "Copy config.yaml to the project root and fill in your credentials."
+        )
     with open(config_path, "r") as f:
         data = yaml.safe_load(f)
     _config = AppConfig(**data)

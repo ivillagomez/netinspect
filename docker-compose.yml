@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  traffic-analyzer:
+    build: .
+    image: traffic-analyzer-tool:latest
+    container_name: traffic-analyzer-tool
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
