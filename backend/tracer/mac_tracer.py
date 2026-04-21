@@ -661,7 +661,7 @@ class NetworkTracer:
         is_ruckus_switch = (
             "icx" in combined
             or ("ruckus" in combined and not any(
-                m in combined for m in ("r510", "r550", "r650", "r750", "t750", "h550", "t310", "t610")
+                m in combined for m in ("r350", "r450", "r510", "r550", "r650", "r670", "r750", "r770", "t310", "t610", "t750", "h320", "h510", "h550")
             ))
         )
         if not is_ruckus_switch:
@@ -715,6 +715,7 @@ class NetworkTracer:
 
             nbr_ip  = getattr(nbr, "remote_ip", None)
             nbr_mac = normalize_mac(nbr.remote_device) if _looks_like_mac(nbr.remote_device) else None
+            order = (last_sw_hop.order + 1) if last_sw_hop else 10
             ap = None
             if nbr_mac:
                 ap = await self.r1.get_ap_by_mac(nbr_mac)
@@ -723,9 +724,30 @@ class NetworkTracer:
                     if candidate.get("ip") == nbr_ip or candidate.get("ipAddress") == nbr_ip:
                         ap = candidate
                         break
+
             if ap:
                 ap_id = ap.get("id") or ap.get("apId")
-                return await self._build_ap_hop(str(ap_id), (last_sw_hop.order + 1) if last_sw_hop else 10)
+                return await self._build_ap_hop(str(ap_id), order)
+
+            # R1 unavailable or AP not found there — build hop from CDP/LLDP data alone.
+            # We already confirmed it's a Ruckus AP from the system_description.
+            name     = getattr(nbr, "remote_device", "Ruckus AP")
+            sys_desc = getattr(nbr, "system_description", "") or getattr(nbr, "platform", "")
+            # Extract model from system_description: "Ruckus R670 Multimedia Hotzone..."
+            model = name  # default to CDP/LLDP device name (e.g. "R670")
+            m = re.search(r'\b(R\d{3}[\w-]*|T\d{3}[\w-]*|H\d{3}[\w-]*)', sys_desc, re.IGNORECASE)
+            if m:
+                model = m.group(1)
+            logger.info(f"[check_if_ap] R1 unavailable — building AP hop from LLDP: name={name!r} model={model!r} ip={nbr_ip!r}")
+            return Hop(
+                order=order,
+                device_type=DeviceType.RUCKUS_AP,
+                device_name=name,
+                device_ip=nbr_ip,
+                vendor="Ruckus",
+                model=model,
+                raw_data={"source": "lldp", "system_description": sys_desc},
+            )
         return None
 
 
