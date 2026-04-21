@@ -707,7 +707,17 @@ class NetworkTracer:
                 + " " + getattr(nbr, "system_description", "")
             ).lower()
 
-            is_ruckus = any(kw in combined for kw in ("ruckus", "r510", "r550", "r650", "r750", "t750", "h550", "t310", "t610"))
+            is_ruckus = any(kw in combined for kw in (
+                "ruckus",
+                # Indoor APs
+                "r350", "r450", "r510", "r550",
+                "r650", "r660", "r670",
+                "r750", "r760", "r770",
+                # Outdoor APs
+                "t310", "t610", "t750",
+                # Wall-plate APs
+                "h320", "h510", "h550",
+            ))
             is_icx    = "icx" in combined  # ICX = switch, not AP
 
             if not is_ruckus or is_icx:

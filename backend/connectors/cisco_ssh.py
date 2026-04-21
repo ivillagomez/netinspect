@@ -565,7 +565,9 @@ class CiscoSwitch:
             remote_port = shorten_interface(port_m.group(1).strip()) if port_m else ""
             ip_m = re.search(r"(?:Management Addresses|IP):\s*\n?\s*(?:IP:\s*)?(\d+\.\d+\.\d+\.\d+)", block)
             remote_ip = ip_m.group(1) if ip_m else None
-            desc_m = re.search(r"System Description:\s*\n\s*(.+)", block)
+            # Match description on same line ("System Description: Ruckus R670 ...")
+            # or next line ("System Description:\n  Ruckus R670 ...")
+            desc_m = re.search(r"System Description:[ \t]*\n?[ \t]*(\S[^\n]*)", block)
             sys_desc = desc_m.group(1).strip() if desc_m else ""
             if not remote_device and not remote_port:
                 continue
