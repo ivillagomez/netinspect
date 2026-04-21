@@ -400,14 +400,46 @@ class NetworkTracer:
         return None
 
     def _find_edge(self, cisco_results: List[Dict]) -> Optional[Dict]:
-        """Return the switch with the MAC on a non-trunk (access) port."""
-        for raw in cisco_results:
-            if raw.get("reachable") and raw.get("mac_entry") and not raw.get("is_trunk", True):
+        """Return the switch most likely to be directly connected to the end device.
+
+        Priority tiers (highest → lowest):
+          1. Non-trunk, non-portchannel  — ideal access port
+          2. Non-trunk, portchannel      — unusual but possible
+          3. Trunk, non-portchannel      — AP/device port in trunk mode (multi-SSID)
+          4. Trunk, portchannel          — MAC came through an uplink; last resort
+        """
+        candidates = [
+            (raw, raw["mac_entry"].port if raw.get("mac_entry") else "")
+            for raw in cisco_results if raw.get("mac_entry")
+        ]
+        logger.info(
+            "[find_edge] candidates: %s",
+            [(r.get("hostname", r.get("switch", "?")), p, r.get("is_trunk", "?"))
+             for r, p in candidates]
+        )
+
+        def _is_po(port: str) -> bool:
+            return port.upper().startswith("PO")
+
+        # Tier 1 — non-trunk, non-portchannel
+        for raw, port in candidates:
+            if raw.get("reachable") and not raw.get("is_trunk", True) and not _is_po(port):
+                logger.info("[find_edge] tier1 → %s port %s", raw.get("hostname", "?"), port)
                 return raw
-        # Fallback: any switch that found the MAC
-        for raw in cisco_results:
-            if raw.get("mac_entry"):
+        # Tier 2 — non-trunk, portchannel
+        for raw, port in candidates:
+            if raw.get("reachable") and not raw.get("is_trunk", True):
+                logger.info("[find_edge] tier2 → %s port %s", raw.get("hostname", "?"), port)
                 return raw
+        # Tier 3 — trunk on a regular port (AP trunk, direct attachment)
+        for raw, port in candidates:
+            if not _is_po(port):
+                logger.info("[find_edge] tier3 → %s port %s", raw.get("hostname", "?"), port)
+                return raw
+        # Tier 4 — trunk on portchannel (MAC arrived via uplink, last resort)
+        for raw, port in candidates:
+            logger.info("[find_edge] tier4 → %s port %s", raw.get("hostname", "?"), port)
+            return raw
         return None
 
     # ──────────────────────────────────────────────────────────────
