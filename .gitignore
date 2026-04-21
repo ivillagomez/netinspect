@@ -10,3 +10,7 @@ build/
 .pytest_cache/
 *.log
 References/
+
+# Local config contains real credentials — never commit with real values
+# Copy config.yaml, fill in your credentials, keep it local
+config.yaml
