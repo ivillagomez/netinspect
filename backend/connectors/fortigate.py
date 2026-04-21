@@ -149,3 +149,14 @@ class FortiGateClient:
         if status:
             return status.get("hostname", "FortiGate")
         return "FortiGate"
+
+    async def get_platform_info(self) -> Dict:
+        """Return {model, version, serial} from system status."""
+        status = await self.get_system_status()
+        if not status:
+            return {}
+        return {
+            "model": status.get("model_name") or status.get("model") or "",
+            "version": status.get("version") or status.get("branch_pt") or "",
+            "serial": status.get("serial") or status.get("serial_number") or "",
+        }

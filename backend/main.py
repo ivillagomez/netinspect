@@ -46,7 +46,7 @@ async def trace(request: TraceRequest):
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     tracer = get_tracer()
     try:
-        result = await tracer.trace(request.query.strip())
+        result = await tracer.trace(request.query.strip(), request.options)
         return result
     except Exception as e:
         logger.error(f"Trace error for '{request.query}': {e}", exc_info=True)

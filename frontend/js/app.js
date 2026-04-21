@@ -42,6 +42,35 @@ function mkBadge(text, type) {
   return b;
 }
 
+// ── Options panel ─────────────────────────────────────────────
+function toggleOptions() {
+  const panel = document.getElementById('optionsPanel');
+  const caret = document.getElementById('optionsCaret');
+  const open  = panel.classList.toggle('open');
+  caret.style.transform = open ? 'rotate(90deg)' : '';
+}
+
+function updateOptionsLabel() {
+  const keys = ['interface_status', 'error_counters', 'mtu_check', 'stp', 'poe', 'neighbor_info'];
+  const enabled = keys.filter(k => document.getElementById('opt_' + k)?.checked).length;
+  const label = document.getElementById('optionsToggleLabel');
+  label.textContent = enabled === keys.length
+    ? 'Diagnostics: All enabled'
+    : `Diagnostics: ${enabled} / ${keys.length} enabled`;
+}
+
+function getOptions() {
+  return {
+    interface_status: !!document.getElementById('opt_interface_status')?.checked,
+    error_counters:   !!document.getElementById('opt_error_counters')?.checked,
+    mtu_check:        !!document.getElementById('opt_mtu_check')?.checked,
+    stp:              !!document.getElementById('opt_stp')?.checked,
+    poe:              !!document.getElementById('opt_poe')?.checked,
+    neighbor_info:    !!document.getElementById('opt_neighbor_info')?.checked,
+    wireless_info:    true,
+  };
+}
+
 // ── Trace ─────────────────────────────────────────────────────
 async function doTrace() {
   const query = document.getElementById('searchInput').value.trim();
@@ -53,7 +82,7 @@ async function doTrace() {
     const res = await fetch('/api/trace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, options: getOptions() }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -94,6 +123,7 @@ function renderResults(data) {
   renderSummaryBar(data);
   renderPath(data.path || []);
   renderIssues(data.all_issues || []);
+  renderTestsSummary(data.test_summary || []);
   renderHopDetails(data.path || []);
 }
 
@@ -132,10 +162,12 @@ function renderSummaryBar(data) {
   badgesEl.innerHTML = '';
   const crits = (data.all_issues || []).filter(i => i.severity === 'critical').length;
   const warns = (data.all_issues || []).filter(i => i.severity === 'warning').length;
+  const passes = (data.test_summary || []).filter(t => t.status === 'pass').length;
   if (crits) badgesEl.appendChild(mkBadge(`🔴 ${crits} Critical`, 'crit'));
   if (warns) badgesEl.appendChild(mkBadge(`⚠️ ${warns} Warning`, 'warn'));
   if (!crits && !warns) badgesEl.appendChild(mkBadge('✓ All clear', 'ok'));
   if (data.path) badgesEl.appendChild(mkBadge(`${data.path.length} hops`, 'neutral'));
+  if (passes) badgesEl.appendChild(mkBadge(`${passes} tests passed`, 'ok'));
 }
 
 function renderPath(path) {
@@ -171,7 +203,9 @@ function renderPath(path) {
 
     const sub = document.createElement('div');
     sub.className = 'node-sub';
-    sub.textContent = hop.device_ip || meta.label;
+    // Show vendor+model if available, else IP, else device type label
+    const vendorModel = [hop.vendor, hop.model].filter(Boolean).join(' ');
+    sub.textContent = vendorModel || hop.device_ip || meta.label;
 
     const portInfo = document.createElement('div');
     portInfo.className = 'node-port';
@@ -187,6 +221,17 @@ function renderPath(path) {
     if (idx < path.length - 1) {
       const arrow = document.createElement('div');
       arrow.className = 'path-arrow';
+
+      // Show connection ports between this hop and the next
+      const nextHop = path[idx + 1];
+      const connLabel = buildConnLabel(hop, nextHop);
+
+      if (connLabel) {
+        const lbl = document.createElement('div');
+        lbl.className = 'arrow-conn-label';
+        lbl.textContent = connLabel;
+        arrow.appendChild(lbl);
+      }
       const line = document.createElement('div');
       line.className = 'arrow-line';
       arrow.appendChild(line);
@@ -196,6 +241,16 @@ function renderPath(path) {
 
   container.innerHTML = '';
   container.appendChild(flow);
+}
+
+function buildConnLabel(hop, nextHop) {
+  // Show "egress→ingress" ports between two hops
+  const from = hop.egress_port;
+  const to   = nextHop.ingress_port;
+  if (from && to) return `${from} ↔ ${to}`;
+  if (from) return from;
+  if (to)   return to;
+  return '';
 }
 
 function renderIssues(issues) {
@@ -215,6 +270,45 @@ function renderIssues(issues) {
       </div>`;
     list.appendChild(item);
   });
+}
+
+function renderTestsSummary(tests) {
+  const section = document.getElementById('testsSection');
+  const container = document.getElementById('testsSummary');
+  if (!tests.length) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  const counts = { pass: 0, fail: 0, warning: 0, skip: 0, na: 0 };
+  tests.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
+
+  const statsBar = document.createElement('div');
+  statsBar.className = 'tests-stats';
+  if (counts.pass)    statsBar.appendChild(mkBadge(`✓ ${counts.pass} passed`, 'ok'));
+  if (counts.fail)    statsBar.appendChild(mkBadge(`✗ ${counts.fail} failed`, 'crit'));
+  if (counts.warning) statsBar.appendChild(mkBadge(`⚠ ${counts.warning} warnings`, 'warn'));
+  if (counts.skip)    statsBar.appendChild(mkBadge(`– ${counts.skip} skipped`, 'neutral'));
+
+  const grid = document.createElement('div');
+  grid.className = 'tests-grid';
+
+  tests.forEach(test => {
+    if (test.status === 'skip' || test.status === 'na') return;
+    const item = document.createElement('div');
+    item.className = `test-item test-${test.status}`;
+    const icon = { pass: '✓', fail: '✗', warning: '⚠', skip: '–', na: '–' }[test.status] || '–';
+    item.innerHTML = `
+      <span class="test-icon test-icon-${test.status}">${icon}</span>
+      <div class="test-body">
+        <div class="test-name">${esc(test.name)}</div>
+        ${test.value ? `<div class="test-value">${esc(test.value)}</div>` : ''}
+        ${test.message ? `<div class="test-msg">${esc(test.message)}</div>` : ''}
+      </div>`;
+    grid.appendChild(item);
+  });
+
+  container.innerHTML = '';
+  container.appendChild(statsBar);
+  if (grid.children.length) container.appendChild(grid);
 }
 
 function renderHopDetails(path) {
@@ -248,14 +342,21 @@ function buildHopCard(hop, idx) {
 
   const titleGroup = document.createElement('div');
   titleGroup.className = 'hop-title-group';
+  const vendorModel = [hop.vendor, hop.model].filter(Boolean).join(' ');
+  const subLine = [
+    hop.device_ip || meta.label,
+    vendorModel,
+    hop.ingress_port ? `in: ${hop.ingress_port}` : '',
+  ].filter(Boolean).join(' · ');
   titleGroup.innerHTML = `
     <div class="hop-title">${esc(hop.device_name)}</div>
-    <div class="hop-subtitle">${hop.device_ip || meta.label}${hop.ingress_port ? ' · ' + hop.ingress_port : ''}</div>`;
+    <div class="hop-subtitle">${esc(subLine)}</div>`;
 
   const badges = document.createElement('div');
   badges.className = 'hop-badges';
   if (!hop.reachable && hop.device_type === 'cisco_switch') badges.appendChild(mkBadge('Unreachable', 'crit'));
   if (hop.vlan) badges.appendChild(mkBadge('VLAN ' + hop.vlan, 'info'));
+  if (hop.software_version) badges.appendChild(mkBadge(hop.software_version, 'neutral'));
   if (hasCrit)  badges.appendChild(mkBadge('⚠ Issues', 'crit'));
   else if (hasWarn) badges.appendChild(mkBadge('⚠ Warning', 'warn'));
   else if (hop.reachable || hop.device_type !== 'cisco_switch') badges.appendChild(mkBadge('OK', 'ok'));
@@ -272,6 +373,26 @@ function buildHopCard(hop, idx) {
   // Body
   const body = document.createElement('div');
   body.className = 'hop-body';
+
+  // Device info (vendor/model/version row)
+  if (hop.vendor || hop.model || hop.software_version) {
+    body.innerHTML += `<div class="subsection-title">Device Info</div>`;
+    body.appendChild(buildDetailGrid([
+      ['Vendor',  hop.vendor  || '–'],
+      ['Model',   hop.model   || '–'],
+      ['Version', hop.software_version || '–'],
+      ['IP',      hop.device_ip || '–'],
+    ]));
+  }
+
+  // Port connections
+  if (hop.ingress_port || hop.egress_port) {
+    body.innerHTML += `<div class="subsection-title">Port Connections</div>`;
+    body.appendChild(buildDetailGrid([
+      ['Ingress Port', hop.ingress_port || '–'],
+      ['Egress Port',  hop.egress_port  || '–'],
+    ]));
+  }
 
   // Interface status
   if (hop.interface_status) {
@@ -350,6 +471,29 @@ function buildHopCard(hop, idx) {
         ['RSSI',  rd.rssi ? rd.rssi + ' dBm' : '–', rssiColor(rd.rssi)],
         ['MAC',   rd.mac || '–'],
       ]));
+    }
+  }
+
+  // Per-hop tests
+  if (hop.tests && hop.tests.length) {
+    const nonSkip = hop.tests.filter(t => t.status !== 'skip' && t.status !== 'na');
+    if (nonSkip.length) {
+      body.innerHTML += `<div class="subsection-title">Tests</div>`;
+      const testGrid = document.createElement('div');
+      testGrid.className = 'tests-grid compact';
+      nonSkip.forEach(test => {
+        const item = document.createElement('div');
+        item.className = `test-item test-${test.status}`;
+        const icon = { pass: '✓', fail: '✗', warning: '⚠' }[test.status] || '–';
+        item.innerHTML = `
+          <span class="test-icon test-icon-${test.status}">${icon}</span>
+          <div class="test-body">
+            <div class="test-name">${esc(test.name)}</div>
+            ${test.value ? `<div class="test-value">${esc(test.value)}</div>` : ''}
+          </div>`;
+        testGrid.appendChild(item);
+      });
+      body.appendChild(testGrid);
     }
   }
 

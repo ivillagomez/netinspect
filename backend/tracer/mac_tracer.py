@@ -1,14 +1,17 @@
 import asyncio
 import logging
+import re
 import time
-from collections import deque
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Any
 
 from backend.config import AppConfig
 from backend.connectors.fortigate import FortiGateClient, normalize_mac
 from backend.connectors.cisco_ssh import CiscoSwitch
 from backend.connectors.ruckus_r1 import RuckusR1Client
-from backend.models import Hop, DeviceType, Issue, IssueSeverity, TraceResult
+from backend.models import (
+    Hop, DeviceType, Issue, IssueSeverity, TraceResult,
+    DiagnosticOptions, TestResult, TestStatus,
+)
 from backend.tracer import resolver as _resolver
 from backend.tracer.diagnostics import run_all_checks
 
@@ -22,11 +25,13 @@ class NetworkTracer:
         self.cisco_switches = [CiscoSwitch(sw) for sw in config.cisco_switches]
         self.r1 = RuckusR1Client(config.ruckus_r1)
 
-    async def trace(self, query: str) -> TraceResult:
+    async def trace(self, query: str, options: DiagnosticOptions = None) -> TraceResult:
+        if options is None:
+            options = DiagnosticOptions()
         start = time.time()
         result = TraceResult(query=query)
 
-        # --- Step 1: Resolve input to MAC/IP ---
+        # Step 1 — Resolve input → MAC + IP
         try:
             resolution = await _resolver.resolve(query, self.fg)
         except Exception as e:
@@ -52,66 +57,62 @@ class NetworkTracer:
         mac = resolution.mac
         norm_mac = normalize_mac(mac)
 
-        # --- Step 2: Build FortiGate hop ---
+        # Step 2 — FortiGate hop (always first)
         fg_hop = await self._build_fg_hop(mac, resolution.ip)
         result.path.append(fg_hop)
 
-        # --- Step 3: Query all Cisco switches in parallel ---
-        cisco_tasks = [sw.gather_all(norm_mac) for sw in self.cisco_switches]
+        # Step 3 — Query all Cisco switches in parallel
+        cisco_tasks = [sw.gather_all(norm_mac, options) for sw in self.cisco_switches]
         cisco_results = await asyncio.gather(*cisco_tasks, return_exceptions=True)
+        cisco_results = [r for r in cisco_results if isinstance(r, dict)]
 
-        # Build topology from CDP/LLDP neighbor tables
-        topology = self._build_topology(cisco_results)
-
-        # Find which switch has the MAC on an access port
-        edge_info = self._find_edge(cisco_results)
-
-        # --- Step 4: Check Ruckus R1 (wireless client or R1-managed switch) ---
+        # Step 4 — R1: wireless client + R1-managed switch (parallel)
         r1_client_info = None
         r1_switch_info = None
         try:
             r1_client_info, r1_switch_info = await asyncio.gather(
                 self.r1.find_client_by_mac(norm_mac),
                 self.r1.find_switch_port_for_mac(norm_mac),
+                return_exceptions=True,
             )
+            if isinstance(r1_client_info, Exception):
+                r1_client_info = None
+            if isinstance(r1_switch_info, Exception):
+                r1_switch_info = None
         except Exception as e:
             logger.warning(f"R1 lookup failed: {e}")
 
-        # --- Step 5: Build ordered path ---
-        if edge_info:
-            # Device is wired — trace path through switches
-            switch_hops = self._build_switch_path(edge_info, cisco_results, topology)
+        # Step 5 — Find edge switch (MAC on access port)
+        edge = self._find_edge(cisco_results)
+
+        if edge:
+            # ── Wired path: chain-walk from edge switch toward FortiGate ──
+            switch_hops = await self._walk_path(edge, cisco_results, options)
             result.path.extend(switch_hops)
 
-            # Check if edge switch's client port connects to a Ruckus AP
-            ap_hop = await self._check_ap_on_edge(edge_info, cisco_results)
+            # Is the last client port actually an AP?
+            last_sw = switch_hops[-1] if switch_hops else None
+            ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
             if ap_hop:
                 result.path.append(ap_hop)
-                # Wireless client connected through this AP
-                end_hop = self._build_wireless_end_hop(r1_client_info, mac, resolution.ip, len(result.path))
-                if end_hop:
-                    result.path.append(end_hop)
+                result.path.append(self._end_hop_wireless(r1_client_info, mac, resolution.ip, len(result.path)))
             else:
-                # Directly wired end device
-                result.path.append(self._build_wired_end_hop(mac, resolution.ip, len(result.path)))
+                result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
 
-        elif r1_client_info:
-            # Wireless client found via R1
+        elif r1_client_info and not isinstance(r1_client_info, Exception):
+            # Wireless client found directly via R1
             ap_id = r1_client_info.get("apId") or r1_client_info.get("connectedApId")
             if ap_id:
-                ap_hop = await self._build_r1_ap_hop(str(ap_id), len(result.path))
+                ap_hop = await self._build_ap_hop(str(ap_id), len(result.path))
                 if ap_hop:
                     result.path.append(ap_hop)
-            result.path.append(self._build_wireless_end_hop(r1_client_info, mac, resolution.ip, len(result.path)))
+            result.path.append(self._end_hop_wireless(r1_client_info, mac, resolution.ip, len(result.path)))
 
-        elif r1_switch_info:
-            # Device on an R1-managed switch
-            sw_hop = self._build_r1_switch_hop(r1_switch_info, len(result.path))
-            result.path.append(sw_hop)
-            result.path.append(self._build_wired_end_hop(mac, resolution.ip, len(result.path)))
+        elif r1_switch_info and not isinstance(r1_switch_info, Exception):
+            result.path.append(self._build_r1_switch_hop(r1_switch_info, len(result.path)))
+            result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
 
         else:
-            # MAC not found on any switch
             result.status = "partial"
             result.path.append(Hop(
                 order=len(result.path),
@@ -122,13 +123,14 @@ class NetworkTracer:
                     severity=IssueSeverity.WARNING,
                     category="discovery",
                     message="Device MAC not found on any switch",
-                    detail="Device may be offline, or connected to an unmanaged switch",
+                    detail="Device may be offline, on an unmanaged switch, or the MAC has aged out",
                 )],
             ))
 
-        # --- Step 6: Run diagnostics ---
-        all_issues = run_all_checks(result.path)
+        # Step 6 — Run diagnostics on all hops
+        all_issues, test_summary = run_all_checks(result.path, options)
         result.all_issues = all_issues
+        result.test_summary = test_summary
 
         if not result.status or result.status == "success":
             has_critical = any(i.severity == IssueSeverity.CRITICAL for i in all_issues)
@@ -137,78 +139,272 @@ class NetworkTracer:
         result.trace_time_ms = int((time.time() - start) * 1000)
         return result
 
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────
+    # Chain-walk path builder  (replaces broken BFS)
+    # ──────────────────────────────────────────────────────────────
+
+    async def _walk_path(
+        self,
+        edge: Dict,
+        all_cisco: List[Dict],
+        options: DiagnosticOptions,
+    ) -> List[Hop]:
+        """
+        Walk the network path starting from the edge (access) switch toward the
+        FortiGate, one hop at a time.  Handles unknown intermediate devices
+        (e.g. Ruckus switches) by looking at what the neighbouring Cisco switch
+        reports as its CDP/LLDP peer.
+
+        Display order: core-most switch first (order=1) so that the rendered
+        path reads  FG → core → … → access → device.
+        """
+        fg_ip = self.config.fortigate.host
+        hops_raw: List[Dict] = []   # accumulated in edge→core order
+        visited: set = set()
+
+        current = edge
+        coming_from_port: Optional[str] = None   # port on current device that the previous hop used
+
+        for _ in range(8):
+            sw_name = current.get("hostname") or current.get("switch", "")
+            if sw_name in visited:
+                break
+            visited.add(sw_name)
+
+            # Access port = port where the end-device MAC was seen (only for edge)
+            is_edge = len(hops_raw) == 0
+            access_port: Optional[str] = None
+            if is_edge and current.get("mac_entry"):
+                access_port = current["mac_entry"].port
+
+            # Collect all CDP + LLDP neighbors, deduped by remote device
+            all_neighbors = _dedup_neighbors(
+                current.get("all_cdp", []) + current.get("all_lldp", [])
+            )
+
+            # Uplink candidates = all neighbors NOT on the access port
+            uplink_candidates = [
+                n for n in all_neighbors
+                if access_port is None or n.local_port != access_port
+            ] or all_neighbors
+
+            uplink = self._pick_uplink(uplink_candidates, fg_ip, visited)
+
+            hops_raw.append({
+                "raw": current,
+                "is_edge": is_edge,
+                "ingress_port": coming_from_port,   # port on THIS device from previous hop
+                "egress_port": uplink.local_port if uplink else None,
+                "access_port": access_port,
+            })
+
+            if not uplink:
+                break
+
+            neighbor_ip   = getattr(uplink, "remote_ip", None)
+            neighbor_name = getattr(uplink, "remote_device", "")
+
+            # Reached FortiGate?
+            if neighbor_ip == fg_ip or "forti" in neighbor_name.lower():
+                break
+
+            # Known Cisco switch?
+            next_cisco = (
+                self._result_by_hostname(neighbor_name, all_cisco)
+                or self._result_by_ip(neighbor_ip, all_cisco)
+            )
+            if next_cisco:
+                coming_from_port = getattr(uplink, "remote_port", None)
+                current = next_cisco
+                continue
+
+            # ── Unknown intermediate device (Ruckus switch, etc.) ──
+            # Find which other Cisco switch has this device as its CDP/LLDP peer.
+            beyond = self._cisco_beyond(neighbor_name, neighbor_ip, sw_name, all_cisco)
+
+            # Determine the intermediate device's egress port (toward beyond switch)
+            inter_egress: Optional[str] = None
+            inter_ingress = getattr(uplink, "remote_port", None)  # port on Ruckus facing current
+            if beyond:
+                # Look at beyond switch's CDP/LLDP for the intermediate device
+                for n in _dedup_neighbors(beyond.get("all_cdp", []) + beyond.get("all_lldp", [])):
+                    if (getattr(n, "remote_device", "") == neighbor_name
+                            or (neighbor_ip and getattr(n, "remote_ip", None) == neighbor_ip)):
+                        inter_egress = getattr(n, "remote_port", None)
+                        coming_from_port = n.local_port   # port on beyond switch facing intermediate
+                        break
+
+            inter_hop = self._build_intermediate_hop(
+                uplink, len(hops_raw) + 1,
+                ingress_port=inter_ingress,
+                egress_port=inter_egress,
+            )
+            hops_raw.append({
+                "hop": inter_hop,
+                "is_intermediate": True,
+            })
+            visited.add(neighbor_name)
+
+            if beyond:
+                current = beyond
+            else:
+                break
+
+        # Reverse so path reads FG → core → access (hops_raw is edge → core)
+        hops_raw.reverse()
+
+        result_hops: List[Hop] = []
+        for i, entry in enumerate(hops_raw):
+            order = i + 1
+            if entry.get("is_intermediate"):
+                hop = entry["hop"]
+                hop.order = order
+                result_hops.append(hop)
+            else:
+                hop = self._build_cisco_hop(
+                    raw=entry["raw"],
+                    order=order,
+                    is_edge=entry["is_edge"],
+                    access_port=entry["access_port"],
+                    ingress_port=entry["ingress_port"],
+                    egress_port=entry["egress_port"],
+                )
+                result_hops.append(hop)
+
+        return result_hops
+
+    def _pick_uplink(self, neighbors: List, fg_ip: str, visited: set) -> Optional[Any]:
+        """Return the best uplink neighbor candidate (toward FortiGate)."""
+        known_ips = {sw.host for sw in self.cisco_switches}
+
+        # Priority 1 — FortiGate
+        for n in neighbors:
+            if getattr(n, "remote_ip", None) == fg_ip:
+                return n
+            if "forti" in getattr(n, "remote_device", "").lower():
+                return n
+
+        # Priority 2 — Known Cisco switch not yet visited
+        for n in neighbors:
+            ip   = getattr(n, "remote_ip", None)
+            name = getattr(n, "remote_device", "")
+            if ip in known_ips and name not in visited:
+                return n
+
+        # Priority 3 — Any switch (by CDP capabilities or name pattern)
+        for n in neighbors:
+            name = getattr(n, "remote_device", "")
+            caps = getattr(n, "capabilities", [])
+            if name not in visited and any("switch" in c.lower() or "router" in c.lower() for c in caps):
+                return n
+
+        # Priority 4 — Anything not yet visited
+        for n in neighbors:
+            if getattr(n, "remote_device", "") not in visited:
+                return n
+
+        return None
+
+    def _cisco_beyond(
+        self,
+        device_name: str,
+        device_ip: Optional[str],
+        exclude_sw: str,
+        all_cisco: List[Dict],
+    ) -> Optional[Dict]:
+        """Find a Cisco switch (other than exclude_sw) that has device_name as CDP/LLDP neighbor."""
+        for raw in all_cisco:
+            sw = raw.get("hostname") or raw.get("switch", "")
+            if sw == exclude_sw or not raw.get("reachable"):
+                continue
+            for n in _dedup_neighbors(raw.get("all_cdp", []) + raw.get("all_lldp", [])):
+                if (getattr(n, "remote_device", "") == device_name
+                        or (device_ip and getattr(n, "remote_ip", None) == device_ip)):
+                    return raw
+        return None
+
+    def _result_by_hostname(self, name: str, cisco_results: List[Dict]) -> Optional[Dict]:
+        for raw in cisco_results:
+            if raw.get("hostname") == name or raw.get("switch") == name:
+                return raw
+        return None
+
+    def _result_by_ip(self, ip: Optional[str], cisco_results: List[Dict]) -> Optional[Dict]:
+        if not ip:
+            return None
+        for raw in cisco_results:
+            if raw.get("host") == ip:
+                return raw
+        return None
+
+    def _find_edge(self, cisco_results: List[Dict]) -> Optional[Dict]:
+        """Return the switch with the MAC on a non-trunk (access) port."""
+        for raw in cisco_results:
+            if raw.get("reachable") and raw.get("mac_entry") and not raw.get("is_trunk", True):
+                return raw
+        # Fallback: any switch that found the MAC
+        for raw in cisco_results:
+            if raw.get("mac_entry"):
+                return raw
+        return None
+
+    # ──────────────────────────────────────────────────────────────
     # Hop builders
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────
 
     async def _build_fg_hop(self, mac: str, ip: Optional[str]) -> Hop:
+        hostname = "FortiGate"
+        fg_interface = ""
+        vendor = "Fortinet"
+        model = ""
+        version = ""
         try:
             hostname = await self.fg.get_hostname()
             arp_entry = await self.fg.get_arp_entry(mac=mac)
             fg_interface = arp_entry.get("interface", "") if arp_entry else ""
+            platform = await self.fg.get_platform_info()
+            model   = platform.get("model", "")
+            version = platform.get("version", "")
         except Exception:
-            hostname = "FortiGate"
-            fg_interface = ""
+            pass
 
         return Hop(
             order=0,
             device_type=DeviceType.FIREWALL,
             device_name=hostname,
             device_ip=self.config.fortigate.host,
+            vendor=vendor,
+            model=model,
+            software_version=version,
             egress_port=fg_interface or None,
             raw_data={"arp_interface": fg_interface},
         )
 
-    def _build_switch_path(
+    def _build_cisco_hop(
         self,
-        edge_info: Dict,
-        cisco_results: List,
-        topology: Dict[str, List],
-    ) -> List[Hop]:
-        """Build ordered list of switch hops from edge to core."""
-        edge_switch_name = edge_info["switch"]
-        path_names = self._trace_path_to_fg(edge_switch_name, topology)
-
-        hops = []
-        # path_names goes from edge → core (reverse order for display FG→edge)
-        # We reverse so FortiGate is order 0, then core switches, then edge
-        for i, sw_name in enumerate(reversed(path_names)):
-            raw = self._get_result_for_switch(sw_name, cisco_results)
-            if not raw:
-                continue
-            is_edge = sw_name == edge_switch_name
-            hop = self._build_cisco_hop(
-                raw=raw,
-                order=i + 1,
-                is_edge=is_edge,
-                edge_info=edge_info if is_edge else None,
-            )
-            hops.append(hop)
-
-        if not hops and edge_info:
-            # Fallback: just add edge switch
-            raw = self._get_result_for_switch(edge_switch_name, cisco_results)
-            if raw:
-                hops.append(self._build_cisco_hop(raw=raw, order=1, is_edge=True, edge_info=edge_info))
-
-        return hops
-
-    def _build_cisco_hop(self, raw: Dict, order: int, is_edge: bool, edge_info: Optional[Dict]) -> Hop:
-        from backend.connectors.cisco_ssh import shorten_interface
+        raw: Dict,
+        order: int,
+        is_edge: bool,
+        access_port: Optional[str],
+        ingress_port: Optional[str],
+        egress_port: Optional[str],
+    ) -> Hop:
         hostname = raw.get("hostname") or raw.get("switch", "Unknown Switch")
-        host_ip = raw.get("host", "")
+        host_ip  = raw.get("host", "")
+        ver      = raw.get("version", {})
+        vendor   = "Cisco"
+        model    = ver.get("model", "")
+        ios_ver  = ver.get("ios_version", "")
 
-        if is_edge and edge_info:
-            mac_entry = edge_info.get("mac_entry")
-            ingress_port = mac_entry.port if mac_entry else None
-            vlan = mac_entry.vlan if mac_entry else None
-        else:
-            ingress_port = None
-            vlan = None
+        mac_entry = raw.get("mac_entry")
+        vlan = mac_entry.vlan if (is_edge and mac_entry) else None
 
-        # egress port = CDP/LLDP neighbor toward next hop (toward FG)
-        egress_port = None
-        cdp_n = raw.get("cdp_neighbor") if is_edge else None
+        # For the edge switch, ingress = port facing device (access_port)
+        if is_edge and access_port:
+            ingress_port = access_port
+
+        # CDP/LLDP neighbor on the ingress port (device-facing) only for edge
+        cdp_n  = raw.get("cdp_neighbor")  if is_edge else None
         lldp_n = raw.get("lldp_neighbor") if is_edge else None
 
         return Hop(
@@ -216,6 +412,9 @@ class NetworkTracer:
             device_type=DeviceType.CISCO_SWITCH,
             device_name=hostname,
             device_ip=host_ip,
+            vendor=vendor,
+            model=model,
+            software_version=ios_ver,
             ingress_port=ingress_port,
             egress_port=egress_port,
             vlan=vlan,
@@ -227,13 +426,83 @@ class NetworkTracer:
             poe_status=raw.get("poe_status"),
             reachable=raw.get("reachable", False),
             raw_data={
-                "version": raw.get("version", {}),
+                "version": ver,
                 "is_trunk": raw.get("is_trunk", False),
                 "error": raw.get("error"),
             },
         )
 
-    def _build_wired_end_hop(self, mac: str, ip: Optional[str], order: int) -> Hop:
+    def _build_intermediate_hop(
+        self,
+        neighbor: Any,
+        order: int,
+        ingress_port: Optional[str] = None,
+        egress_port: Optional[str] = None,
+    ) -> Hop:
+        """Build a hop for a device we can't SSH into (identified via CDP/LLDP)."""
+        name     = getattr(neighbor, "remote_device", "Unknown")
+        ip       = getattr(neighbor, "remote_ip", None)
+        platform = getattr(neighbor, "platform", "") or getattr(neighbor, "system_description", "")
+
+        vendor, model = _parse_vendor_model(name, platform)
+        device_type = DeviceType.RUCKUS_SWITCH if "ruckus" in vendor.lower() else DeviceType.UNKNOWN
+        if "icx" in platform.lower() or "icx" in name.lower():
+            device_type = DeviceType.RUCKUS_SWITCH
+            if not vendor:
+                vendor = "Ruckus"
+
+        return Hop(
+            order=order,
+            device_type=device_type,
+            device_name=name,
+            device_ip=ip,
+            vendor=vendor,
+            model=model,
+            ingress_port=ingress_port,
+            egress_port=egress_port,
+            raw_data={"platform": platform, "source": "cdp_lldp"},
+        )
+
+    def _build_r1_switch_hop(self, r1_switch_info: Dict, order: int) -> Hop:
+        sw   = r1_switch_info.get("switch", {})
+        port = r1_switch_info.get("port", {})
+        name = sw.get("name") or sw.get("switchName") or "Ruckus Switch"
+        ip   = sw.get("ip") or sw.get("ipAddress")
+        port_name = str(port.get("portName") or port.get("name") or port.get("id", ""))
+        model = sw.get("model") or sw.get("modelName") or ""
+        return Hop(
+            order=order,
+            device_type=DeviceType.RUCKUS_SWITCH,
+            device_name=name,
+            device_ip=ip,
+            vendor="Ruckus",
+            model=model,
+            ingress_port=port_name or None,
+            raw_data={"r1_data": r1_switch_info},
+        )
+
+    async def _build_ap_hop(self, ap_id: str, order: int) -> Optional[Hop]:
+        try:
+            ap = await self.r1.get_ap_by_id(ap_id)
+            if not ap:
+                return None
+            name  = ap.get("name") or ap.get("apName") or f"AP-{ap_id}"
+            ip    = ap.get("ip") or ap.get("ipAddress")
+            model = ap.get("model") or ap.get("modelName") or ""
+            return Hop(
+                order=order,
+                device_type=DeviceType.RUCKUS_AP,
+                device_name=name,
+                device_ip=ip,
+                vendor="Ruckus",
+                model=model,
+                raw_data={"ap_id": ap_id, "r1_data": ap},
+            )
+        except Exception as e:
+            logger.warning(f"R1 AP hop failed: {e}")
+        return None
+
+    def _end_hop_wired(self, mac: str, ip: Optional[str], order: int) -> Hop:
         return Hop(
             order=order,
             device_type=DeviceType.WIRED_CLIENT,
@@ -242,7 +511,7 @@ class NetworkTracer:
             raw_data={"mac": mac},
         )
 
-    def _build_wireless_end_hop(self, r1_client: Optional[Dict], mac: str, ip: Optional[str], order: int) -> Hop:
+    def _end_hop_wireless(self, r1_client: Optional[Dict], mac: str, ip: Optional[str], order: int) -> Hop:
         name = ip or mac
         ssid = ""
         rssi = None
@@ -251,13 +520,16 @@ class NetworkTracer:
             ssid = r1_client.get("ssid") or r1_client.get("wlanName") or ""
             rssi = r1_client.get("rssi") or r1_client.get("signal")
         issues = []
-        if rssi and int(rssi) < -75:
-            issues.append(Issue(
-                severity=IssueSeverity.WARNING,
-                category="wireless",
-                message=f"Weak RSSI: {rssi} dBm",
-                detail="Poor signal quality — client may experience packet loss",
-            ))
+        if rssi:
+            try:
+                if int(rssi) < -75:
+                    issues.append(Issue(
+                        severity=IssueSeverity.WARNING, category="wireless",
+                        message=f"Weak RSSI: {rssi} dBm",
+                        detail="Poor signal — client may experience packet loss",
+                    ))
+            except (ValueError, TypeError):
+                pass
         return Hop(
             order=order,
             device_type=DeviceType.WIRELESS_CLIENT,
@@ -267,144 +539,77 @@ class NetworkTracer:
             raw_data={"mac": mac, "ssid": ssid, "rssi": rssi, "r1_data": r1_client or {}},
         )
 
-    async def _build_r1_ap_hop(self, ap_id: str, order: int) -> Optional[Hop]:
-        try:
-            ap = await self.r1.get_ap_by_id(ap_id)
-            if not ap:
-                return None
-            name = ap.get("name") or ap.get("apName") or f"AP-{ap_id}"
-            ip = ap.get("ip") or ap.get("ipAddress")
-            mac = ap.get("mac") or ap.get("macAddress", "")
-            return Hop(
-                order=order,
-                device_type=DeviceType.RUCKUS_AP,
-                device_name=name,
-                device_ip=ip,
-                raw_data={"ap_id": ap_id, "mac": mac, "r1_data": ap},
-            )
-        except Exception as e:
-            logger.warning(f"R1 AP hop build failed: {e}")
+    async def _check_if_ap(
+        self,
+        last_sw_hop: Optional[Hop],
+        edge: Dict,
+        cisco_results: List[Dict],
+    ) -> Optional[Hop]:
+        """Check if the device-facing port on edge switch connects to a Ruckus AP."""
+        cdp  = edge.get("cdp_neighbor")
+        lldp = edge.get("lldp_neighbor")
+        for nbr in [cdp, lldp]:
+            if not nbr:
+                continue
+            combined = (
+                getattr(nbr, "remote_device", "") + " "
+                + getattr(nbr, "platform", "")
+                + " " + getattr(nbr, "system_description", "")
+            ).lower()
+            if any(kw in combined for kw in ("ruckus", "r510", "r550", "r650", "r750", "t750", "h550")):
+                nbr_ip  = getattr(nbr, "remote_ip", None)
+                nbr_mac = normalize_mac(nbr.remote_device) if _looks_like_mac(nbr.remote_device) else None
+                ap = None
+                if nbr_mac:
+                    ap = await self.r1.get_ap_by_mac(nbr_mac)
+                if not ap and nbr_ip:
+                    for candidate in await self.r1.get_all_aps():
+                        if candidate.get("ip") == nbr_ip or candidate.get("ipAddress") == nbr_ip:
+                            ap = candidate
+                            break
+                if ap:
+                    ap_id = ap.get("id") or ap.get("apId")
+                    return await self._build_ap_hop(str(ap_id), (last_sw_hop.order + 1) if last_sw_hop else 10)
         return None
 
-    def _build_r1_switch_hop(self, r1_switch_info: Dict, order: int) -> Hop:
-        sw = r1_switch_info.get("switch", {})
-        port = r1_switch_info.get("port", {})
-        name = sw.get("name") or sw.get("switchName") or "Ruckus Switch"
-        ip = sw.get("ip") or sw.get("ipAddress")
-        port_name = port.get("portName") or port.get("name") or port.get("id", "")
-        return Hop(
-            order=order,
-            device_type=DeviceType.RUCKUS_SWITCH,
-            device_name=name,
-            device_ip=ip,
-            ingress_port=str(port_name),
-            raw_data={"r1_data": r1_switch_info},
-        )
 
-    async def _check_ap_on_edge(self, edge_info: Dict, cisco_results: List) -> Optional[Hop]:
-        """If the edge switch port's CDP/LLDP neighbor is a Ruckus AP, build AP hop."""
-        cdp = edge_info.get("cdp_neighbor")
-        lldp = edge_info.get("lldp_neighbor")
+# ──────────────────────────────────────────────────────────────
+# Utilities
+# ──────────────────────────────────────────────────────────────
 
-        for neighbor in [cdp, lldp]:
-            if not neighbor:
-                continue
-            if any(kw in (neighbor.remote_device + " " + getattr(neighbor, "platform", "")).lower()
-                   for kw in ("ruckus", "ap", "r510", "r550", "r650", "t750")):
-                ap_mac = normalize_mac(neighbor.remote_device) if _looks_like_mac(neighbor.remote_device) else None
-                if ap_mac:
-                    ap = await self.r1.get_ap_by_mac(ap_mac)
-                    if ap:
-                        ap_id = ap.get("id") or ap.get("apId")
-                        return await self._build_r1_ap_hop(str(ap_id), len([]) + 10)
-                # Try by IP
-                if neighbor.remote_ip:
-                    for ap in await self.r1.get_all_aps():
-                        if ap.get("ip") == neighbor.remote_ip or ap.get("ipAddress") == neighbor.remote_ip:
-                            ap_id = ap.get("id") or ap.get("apId")
-                            return await self._build_r1_ap_hop(str(ap_id), 10)
-        return None
+def _dedup_neighbors(neighbors: List) -> List:
+    """Remove duplicate CDP/LLDP entries for the same remote device."""
+    seen: set = set()
+    result = []
+    for n in neighbors:
+        key = getattr(n, "remote_device", "") or getattr(n, "remote_ip", "")
+        if key and key not in seen:
+            seen.add(key)
+            result.append(n)
+        elif not key:
+            result.append(n)
+    return result
 
-    # ------------------------------------------------------------------
-    # Topology helpers
-    # ------------------------------------------------------------------
 
-    def _build_topology(self, cisco_results: List) -> Dict[str, List]:
-        """Build {switch_name: [CDPNeighbor|LLDPNeighbor, ...]} neighbor map."""
-        topology: Dict[str, List] = {}
-        for raw in cisco_results:
-            if isinstance(raw, Exception) or not isinstance(raw, dict):
-                continue
-            sw_name = raw.get("hostname") or raw.get("switch", "")
-            neighbors = []
-            for n in raw.get("all_cdp", []):
-                neighbors.append(n)
-            for n in raw.get("all_lldp", []):
-                # Don't double-add if CDP already has it
-                already = any(
-                    getattr(existing, "remote_device", "") == n.remote_device
-                    for existing in neighbors
-                )
-                if not already:
-                    neighbors.append(n)
-            topology[sw_name] = neighbors
-        return topology
-
-    def _trace_path_to_fg(self, edge_switch: str, topology: Dict[str, List]) -> List[str]:
-        """BFS from edge switch, following neighbors, return ordered list edge→core."""
-        fg_ip = self.config.fortigate.host
-        known_ips = {sw.host for sw in self.cisco_switches}
-
-        visited = set()
-        path: List[str] = []
-        queue = deque([(edge_switch, [edge_switch])])
-
-        while queue:
-            current, current_path = queue.popleft()
-            if current in visited:
-                continue
-            visited.add(current)
-
-            for neighbor in topology.get(current, []):
-                neighbor_ip = getattr(neighbor, "remote_ip", None)
-                neighbor_name = getattr(neighbor, "remote_device", "")
-
-                # Check if neighbor is the FortiGate
-                if neighbor_ip == fg_ip or "fortigate" in neighbor_name.lower() or "forti" in neighbor_name.lower():
-                    return current_path
-
-                # Check if neighbor is another known switch
-                if neighbor_ip in known_ips or neighbor_name in topology:
-                    next_name = neighbor_name if neighbor_name in topology else neighbor_ip
-                    if next_name and next_name not in visited:
-                        queue.append((next_name, current_path + [next_name]))
-
-        return path if path else [edge_switch]
-
-    def _find_edge(self, cisco_results: List) -> Optional[Dict]:
-        """Find the switch+result where MAC is on an ACCESS port."""
-        for raw in cisco_results:
-            if isinstance(raw, Exception) or not isinstance(raw, dict):
-                continue
-            if not raw.get("reachable") or not raw.get("mac_entry"):
-                continue
-            if not raw.get("is_trunk", True):
-                return raw
-        # Fallback: any switch that found the MAC
-        for raw in cisco_results:
-            if isinstance(raw, Exception) or not isinstance(raw, dict):
-                continue
-            if raw.get("mac_entry"):
-                return raw
-        return None
-
-    def _get_result_for_switch(self, sw_name_or_ip: str, cisco_results: List) -> Optional[Dict]:
-        for raw in cisco_results:
-            if isinstance(raw, Exception) or not isinstance(raw, dict):
-                continue
-            if raw.get("hostname") == sw_name_or_ip or raw.get("switch") == sw_name_or_ip or raw.get("host") == sw_name_or_ip:
-                return raw
-        return None
+def _parse_vendor_model(device_name: str, platform: str) -> tuple:
+    """Extract (vendor, model) from CDP/LLDP platform string or device name."""
+    combined = (platform + " " + device_name).lower()
+    if "ruckus" in combined or "icx" in combined or "brocade" in combined:
+        vendor = "Ruckus"
+        # Extract model: look for ICX\d+ or R\d+ patterns
+        m = re.search(r"\b(ICX\s*\d+[\w-]*|R\d{3}[\w-]*|T\d{3}[\w-]*)", platform, re.IGNORECASE)
+        model = m.group(1) if m else ""
+        return vendor, model
+    if "cisco" in combined:
+        vendor = "Cisco"
+        m = re.search(r"\b(WS-C\w+|C\d{4}[\w-]*|N\d{4}[\w-]*)", platform, re.IGNORECASE)
+        model = m.group(1) if m else ""
+        return vendor, model
+    if "hp" in combined or "aruba" in combined or "procurve" in combined:
+        return "HP/Aruba", ""
+    if "juniper" in combined:
+        return "Juniper", ""
+    return "", ""
 
 
 def _looks_like_mac(s: str) -> bool:

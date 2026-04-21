@@ -9,6 +9,14 @@ class IssueSeverity(str, Enum):
     INFO = "info"
 
 
+class TestStatus(str, Enum):
+    PASS = "pass"
+    FAIL = "fail"
+    WARNING = "warning"
+    SKIP = "skip"
+    NA = "na"
+
+
 class DeviceType(str, Enum):
     FIREWALL = "firewall"
     CISCO_SWITCH = "cisco_switch"
@@ -19,10 +27,28 @@ class DeviceType(str, Enum):
     UNKNOWN = "unknown"
 
 
+class DiagnosticOptions(BaseModel):
+    interface_status: bool = True
+    error_counters: bool = True
+    mtu_check: bool = True
+    stp: bool = True
+    poe: bool = True
+    neighbor_info: bool = True
+    wireless_info: bool = True
+
+
 class Issue(BaseModel):
     severity: IssueSeverity
     category: str
     message: str
+    detail: Optional[str] = None
+
+
+class TestResult(BaseModel):
+    name: str
+    status: TestStatus
+    value: Optional[str] = None
+    message: str = ""
     detail: Optional[str] = None
 
 
@@ -98,6 +124,11 @@ class Hop(BaseModel):
     device_type: DeviceType
     device_name: str
     device_ip: Optional[str] = None
+    vendor: str = ""
+    model: str = ""
+    software_version: str = ""
+    # ingress = port where previous hop connects TO this device
+    # egress  = port where this device connects TO next hop
     ingress_port: Optional[str] = None
     egress_port: Optional[str] = None
     vlan: Optional[int] = None
@@ -109,6 +140,7 @@ class Hop(BaseModel):
     poe_status: Optional[PoEStatus] = None
     raw_data: Dict[str, Any] = {}
     issues: List[Issue] = []
+    tests: List[TestResult] = []
     reachable: bool = True
 
 
@@ -120,9 +152,11 @@ class TraceResult(BaseModel):
     status: str = "success"
     path: List[Hop] = []
     all_issues: List[Issue] = []
+    test_summary: List[TestResult] = []
     trace_time_ms: int = 0
     error: Optional[str] = None
 
 
 class TraceRequest(BaseModel):
     query: str
+    options: DiagnosticOptions = DiagnosticOptions()

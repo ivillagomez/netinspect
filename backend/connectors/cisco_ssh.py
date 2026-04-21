@@ -2,14 +2,14 @@ import re
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, TYPE_CHECKING
 
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
 from backend.config import CiscoSwitchConfig
 from backend.models import (
     MACEntry, InterfaceStatus, InterfaceDetails,
-    CDPNeighbor, LLDPNeighbor, STPPortInfo, PoEStatus
+    CDPNeighbor, LLDPNeighbor, STPPortInfo, PoEStatus, DiagnosticOptions,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,8 +85,10 @@ class CiscoSwitch:
     # High-level async API
     # ------------------------------------------------------------------
 
-    async def gather_all(self, mac: str) -> Dict:
+    async def gather_all(self, mac: str, options: Optional[DiagnosticOptions] = None) -> Dict:
         """Connect once, run all relevant commands, disconnect. Returns raw dict."""
+        if options is None:
+            options = DiagnosticOptions()
         cisco_mac = mac_to_cisco(mac)
         result = {"switch": self.name, "host": self.host, "reachable": False}
 
@@ -96,18 +98,33 @@ class CiscoSwitch:
                 result["reachable"] = True
                 result["hostname"] = self._get_hostname()
                 result["mac_entry"] = self._find_mac(cisco_mac)
+                result["version"] = self._get_version_summary()
+                # Always collect CDP/LLDP for topology (needed even if neighbor_info disabled)
                 result["all_cdp"] = self._get_all_cdp_neighbors()
                 result["all_lldp"] = self._get_all_lldp_neighbors()
-                result["version"] = self._get_version_summary()
+                # ARP table useful on L3 switches to correlate IPs
+                result["arp_table"] = self._get_arp_table()
+
                 if result["mac_entry"]:
                     port = result["mac_entry"].port
-                    result["int_status"] = self._get_interface_status(port)
-                    result["int_details"] = self._get_interface_details(port)
+                    # Full MAC table for this port — shows all MACs (helps find upstream switches)
+                    result["port_mac_table"] = self._get_mac_table_for_port(port)
                     result["is_trunk"] = self._is_trunk_port(port)
-                    result["cdp_neighbor"] = self._get_cdp_neighbor(port)
-                    result["lldp_neighbor"] = self._get_lldp_neighbor(port)
-                    result["stp_info"] = self._get_stp_info(port)
-                    result["poe_status"] = self._get_poe_status(port)
+
+                    if options.interface_status or options.error_counters or options.mtu_check:
+                        result["int_status"] = self._get_interface_status(port)
+                        result["int_details"] = self._get_interface_details(port)
+
+                    if options.neighbor_info:
+                        result["cdp_neighbor"] = self._get_cdp_neighbor(port)
+                        result["lldp_neighbor"] = self._get_lldp_neighbor(port)
+
+                    if options.stp:
+                        result["stp_info"] = self._get_stp_info(port)
+
+                    if options.poe:
+                        result["poe_status"] = self._get_poe_status(port)
+
             except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
                 result["error"] = str(e)
                 logger.warning(f"[{self.name}] Connection failed: {e}")
@@ -121,7 +138,7 @@ class CiscoSwitch:
         return await self._run(_work)
 
     async def get_all_neighbors(self) -> Dict:
-        """Collect CDP+LLDP neighbor tables only (for topology building)."""
+        """Collect CDP+LLDP neighbor tables, ARP table, and MAC summary (for topology building)."""
         result = {"switch": self.name, "host": self.host, "reachable": False}
 
         def _work():
@@ -131,6 +148,8 @@ class CiscoSwitch:
                 result["hostname"] = self._get_hostname()
                 result["all_cdp"] = self._get_all_cdp_neighbors()
                 result["all_lldp"] = self._get_all_lldp_neighbors()
+                result["arp_table"] = self._get_arp_table()
+                result["version"] = self._get_version_summary()
             except Exception as e:
                 result["error"] = str(e)
                 logger.warning(f"[{self.name}] Neighbor collection failed: {e}")
@@ -157,15 +176,36 @@ class CiscoSwitch:
     def _get_version_summary(self) -> Dict:
         try:
             out = self._cmd("show version")
-            platform = ""
             ios_version = ""
+            model = ""
+            serial = ""
+
             m = re.search(r"Cisco IOS.*?Version\s+(\S+)", out, re.IGNORECASE)
             if m:
                 ios_version = m.group(1).rstrip(",")
-            m = re.search(r"cisco\s+(WS-\S+|C\d{4}\S*|ISR\S*)", out, re.IGNORECASE)
+
+            # Try to extract exact model number (e.g. WS-C2960X-48FPS-L, C9200-24P, etc.)
+            # Cisco 2960-X style
+            m = re.search(r"cisco\s+(WS-C[\w-]+)", out, re.IGNORECASE)
             if m:
-                platform = m.group(1)
-            return {"ios_version": ios_version, "platform": platform}
+                model = m.group(1)
+            if not model:
+                # Catalyst 9000 style: cisco C9200-24P or cisco Catalyst 9200-24P
+                m = re.search(r"cisco\s+(?:Catalyst\s+)?(C?\d{4}[\w-]+)", out, re.IGNORECASE)
+                if m:
+                    model = m.group(1)
+            if not model:
+                # Generic fallback
+                m = re.search(r"(?:cisco|Model)\s+([\w-]+)", out, re.IGNORECASE)
+                if m:
+                    model = m.group(1)
+
+            # Serial number
+            m = re.search(r"Processor board ID\s+(\S+)", out, re.IGNORECASE)
+            if m:
+                serial = m.group(1)
+
+            return {"ios_version": ios_version, "model": model, "serial": serial}
         except Exception:
             return {}
 
@@ -173,7 +213,6 @@ class CiscoSwitch:
         """show mac address-table address <mac>"""
         try:
             out = self._cmd(f"show mac address-table address {cisco_mac}")
-            # Pattern: vlan  mac  type  port
             pattern = re.compile(
                 r"^\s*(\d+)\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+(\w+)\s+(\S+)",
                 re.MULTILINE | re.IGNORECASE,
@@ -190,6 +229,44 @@ class CiscoSwitch:
         except Exception as e:
             logger.debug(f"[{self.name}] find_mac error: {e}")
         return None
+
+    def _get_mac_table_for_port(self, port: str) -> List[MACEntry]:
+        """show mac address-table interface <port> — all MACs seen on this port."""
+        entries = []
+        try:
+            out = self._cmd(f"show mac address-table interface {port}")
+            pattern = re.compile(
+                r"^\s*(\d+)\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+(\w+)\s+(\S+)",
+                re.MULTILINE | re.IGNORECASE,
+            )
+            for m in pattern.finditer(out):
+                vlan, mac_found, entry_type, iface = m.groups()
+                entries.append(MACEntry(
+                    mac=mac_found,
+                    vlan=int(vlan),
+                    port=shorten_interface(iface),
+                    entry_type=entry_type,
+                ))
+        except Exception as e:
+            logger.debug(f"[{self.name}] mac_table_for_port error: {e}")
+        return entries
+
+    def _get_arp_table(self) -> List[Dict]:
+        """show ip arp — returns list of {ip, mac, interface} for L3 switches."""
+        entries = []
+        try:
+            out = self._cmd("show ip arp")
+            # Format: Protocol  Address  Age  Hardware Addr  Type  Interface
+            pattern = re.compile(
+                r"^Internet\s+(\d+\.\d+\.\d+\.\d+)\s+\S+\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+ARPA\s+(\S+)",
+                re.MULTILINE | re.IGNORECASE,
+            )
+            for m in pattern.finditer(out):
+                ip, mac, iface = m.groups()
+                entries.append({"ip": ip, "mac": mac, "interface": shorten_interface(iface)})
+        except Exception as e:
+            logger.debug(f"[{self.name}] arp_table error: {e}")
+        return entries
 
     def _get_interface_status(self, port: str) -> Optional[InterfaceStatus]:
         """show interfaces <port> status"""
