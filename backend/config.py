@@ -8,7 +8,7 @@ class FortiGateConfig(BaseModel):
     host: str
     port: int = 443
     access_token: str
-    verify_ssl: bool = False
+    verify_ssl: bool = True
     ssh_username: Optional[str] = None
     ssh_password: Optional[str] = None
     ssh_port: int = 22
@@ -31,6 +31,7 @@ class RuckusR1Config(BaseModel):
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8080
+    api_key: Optional[str] = None
 
 
 class AppConfig(BaseModel):

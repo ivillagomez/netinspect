@@ -29,7 +29,7 @@ class FortiGateClient:
             self._client = httpx.AsyncClient(
                 verify=self.config.verify_ssl,
                 timeout=15.0,
-                params={"access_token": self.config.access_token},
+                headers={"Authorization": f"Bearer {self.config.access_token}"},
             )
         return self._client
 

@@ -57,6 +57,29 @@ const DEVICE_META = {
   unknown:          { icon: ICONS.unknown,         label: 'Unknown',       cls: 'unknown'  },
 };
 
+// ── API key ───────────────────────────────────────────────────
+let _apiKey = sessionStorage.getItem('netinspect_api_key') || '';
+
+function apiHeaders(extra = {}) {
+  const h = { ...extra };
+  if (_apiKey) h['X-API-Key'] = _apiKey;
+  return h;
+}
+
+async function apiFetch(url, opts = {}) {
+  opts.headers = apiHeaders(opts.headers || {});
+  const res = await fetch(url, opts);
+  if (res.status === 403) {
+    const key = prompt('API key required:');
+    if (!key) throw new Error('API key required');
+    _apiKey = key;
+    sessionStorage.setItem('netinspect_api_key', key);
+    opts.headers['X-API-Key'] = key;
+    return fetch(url, opts);
+  }
+  return res;
+}
+
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   loadDeviceSummary();
@@ -67,11 +90,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function loadDeviceSummary() {
   try {
-    const res = await fetch('/api/devices');
+    const res = await apiFetch('/api/devices');
     const data = await res.json();
     const el = document.getElementById('deviceSummary');
     el.innerHTML = '';
-    if (data.fortigate) el.appendChild(mkBadge('🔥 ' + data.fortigate.host, 'neutral'));
+    if (data.fortigate) el.appendChild(mkBadge('🔥 ' + data.fortigate.name, 'neutral'));
     if (data.cisco_switches) {
       data.cisco_switches.forEach(sw =>
         el.appendChild(mkBadge('🔌 ' + sw.name, 'neutral'))
@@ -125,7 +148,7 @@ async function doTrace() {
   setState('loading');
 
   try {
-    const res = await fetch('/api/trace', {
+    const res = await apiFetch('/api/trace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, options: getOptions() }),

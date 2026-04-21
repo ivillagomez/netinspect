@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -18,6 +20,9 @@ app = FastAPI(title="NetInspect", version="1.0.0")
 
 _config = None
 _tracer: NetworkTracer = None
+_trace_semaphore = asyncio.Semaphore(5)
+
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def get_tracer() -> NetworkTracer:
@@ -26,6 +31,15 @@ def get_tracer() -> NetworkTracer:
         _config = load_config()
         _tracer = NetworkTracer(_config)
     return _tracer
+
+
+async def verify_api_key(key: str = Security(_api_key_header)):
+    """If server.api_key is configured, require it via X-API-Key header."""
+    cfg = load_config()
+    if not cfg.server.api_key:
+        return  # auth disabled — open access
+    if key != cfg.server.api_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
 @app.on_event("startup")
@@ -40,38 +54,47 @@ async def startup():
 
 # --- API Routes ---
 
-@app.post("/api/trace", response_model=TraceResult)
+@app.post("/api/trace", response_model=TraceResult, dependencies=[Depends(verify_api_key)])
 async def trace(request: TraceRequest):
     if not request.query or not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+    if len(request.query) > 256:
+        raise HTTPException(status_code=400, detail="Query too long")
     tracer = get_tracer()
     try:
-        result = await tracer.trace(request.query.strip(), request.options)
+        async with _trace_semaphore:
+            result = await tracer.trace(request.query.strip(), request.options)
         return result
     except Exception as e:
-        logger.error(f"Trace error for '{request.query}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Trace error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Trace failed — check server logs")
 
 
-@app.get("/api/devices")
+@app.get("/api/devices", dependencies=[Depends(verify_api_key)])
 async def list_devices():
-    """Return configured devices for status overview."""
+    """Return configured device names for status overview."""
     try:
         cfg = load_config()
         return {
-            "fortigate": {"host": cfg.fortigate.host, "name": "FortiGate"},
-            "cisco_switches": [
-                {"name": sw.name, "host": sw.host} for sw in cfg.cisco_switches
-            ],
-            "ruckus_r1": {"base_url": cfg.ruckus_r1.base_url},
+            "fortigate": {"name": "FortiGate"},
+            "cisco_switches": [{"name": sw.name} for sw in cfg.cisco_switches],
+            "ruckus_r1": {"name": "Ruckus One"},
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Devices listing error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load device list")
 
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/ui-config")
+async def ui_config():
+    """Non-sensitive config the frontend needs to bootstrap."""
+    cfg = load_config()
+    return {"api_key_required": bool(cfg.server.api_key)}
 
 
 # --- Static frontend ---
@@ -87,7 +110,8 @@ if os.path.isdir(_frontend_dir):
 
     @app.get("/{full_path:path}")
     async def catch_all(full_path: str):
-        file_path = os.path.join(_frontend_dir, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
+        real_frontend = os.path.realpath(_frontend_dir)
+        candidate = os.path.realpath(os.path.join(_frontend_dir, full_path))
+        if os.path.isfile(candidate) and candidate.startswith(real_frontend + os.sep):
+            return FileResponse(candidate)
         return FileResponse(os.path.join(_frontend_dir, "index.html"))

@@ -99,6 +99,9 @@ class FortiGateSSH:
         diagnose netlink interface list <iface>
         Returns RX/TX packet+byte+error+drop counters and MTU.
         """
+        if not re.match(r'^[\w\-./]+$', interface):
+            logger.warning("Skipping interface stats: invalid interface name")
+            return {}
         try:
             out = self._cmd(f"diagnose netlink interface list {interface}")
             stats = {}
