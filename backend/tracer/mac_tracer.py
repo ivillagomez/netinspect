@@ -88,21 +88,41 @@ class NetworkTracer:
         edge = self._find_edge(cisco_results)
 
         if edge:
-            # ── Wired path: chain-walk from edge switch toward FortiGate ──
+            # ── Chain-walk from edge switch toward FortiGate ──
             switch_hops = await self._walk_path(edge, cisco_results, options)
             result.path.extend(switch_hops)
 
-            # Is the last client port actually an AP?
             last_sw = switch_hops[-1] if switch_hops else None
-            ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
-            if ap_hop:
-                result.path.append(ap_hop)
+
+            if r1_client_info and not isinstance(r1_client_info, Exception):
+                # ── Wireless client confirmed via R1 ──
+                # Check for a Ruckus ICX switch sitting between the Cisco edge and the AP
+                ruckus_sw_hop = await self._build_ruckus_sw_from_edge(edge, len(result.path))
+                if ruckus_sw_hop:
+                    result.path.append(ruckus_sw_hop)
+
+                ap_id = r1_client_info.get("apId") or r1_client_info.get("connectedApId")
+                if ap_id:
+                    ap_hop = await self._build_ap_hop(str(ap_id), len(result.path))
+                    if ap_hop:
+                        result.path.append(ap_hop)
+
                 result.path.append(self._end_hop_wireless(r1_client_info, mac, resolution.ip, len(result.path)))
             else:
-                result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
+                # ── Not found in R1 — check if the access port has an AP via CDP/LLDP ──
+                ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
+                if ap_hop:
+                    result.path.append(ap_hop)
+                    result.path.append(self._end_hop_wireless(None, mac, resolution.ip, len(result.path)))
+                else:
+                    result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
 
         elif r1_client_info and not isinstance(r1_client_info, Exception):
-            # Wireless client found directly via R1
+            # ── Wireless client found via R1 but no Cisco edge switch found ──
+            # Try to find the Ruckus ICX via r1_switch_info
+            if r1_switch_info and not isinstance(r1_switch_info, Exception):
+                result.path.append(self._build_r1_switch_hop(r1_switch_info, len(result.path)))
+
             ap_id = r1_client_info.get("apId") or r1_client_info.get("connectedApId")
             if ap_id:
                 ap_hop = await self._build_ap_hop(str(ap_id), len(result.path))
@@ -588,37 +608,102 @@ class NetworkTracer:
             raw_data={"mac": mac, "ssid": ssid, "rssi": rssi, "r1_data": r1_client or {}},
         )
 
+    async def _build_ruckus_sw_from_edge(self, edge: Dict, order: int) -> Optional[Hop]:
+        """
+        Inspect the device-facing port of the edge Cisco switch.
+        If a Ruckus ICX switch is there (not an AP), build and return a hop for it.
+        Used to surface the ICX in wireless paths: Cisco → ICX → AP → client.
+        """
+        access_port = edge["mac_entry"].port if edge.get("mac_entry") else None
+        if not access_port:
+            return None
+
+        # all_cdp/all_lldp are always collected; filter to the access port
+        all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
+        access_nbr = next(
+            (n for n in all_nbrs if getattr(n, "local_port", "") == access_port),
+            None,
+        )
+        # Fallback to per-port neighbor if available (requires neighbor_info option)
+        if not access_nbr:
+            access_nbr = edge.get("cdp_neighbor") or edge.get("lldp_neighbor")
+        if not access_nbr:
+            return None
+
+        name     = getattr(access_nbr, "remote_device", "")
+        ip       = getattr(access_nbr, "remote_ip", None)
+        platform = getattr(access_nbr, "platform", "") or getattr(access_nbr, "system_description", "")
+        combined = (name + " " + platform).lower()
+
+        # Must be a switch (ICX), not a Ruckus AP
+        is_ruckus_switch = (
+            "icx" in combined
+            or ("ruckus" in combined and not any(
+                m in combined for m in ("r510", "r550", "r650", "r750", "t750", "h550", "t310", "t610")
+            ))
+        )
+        if not is_ruckus_switch:
+            return None
+
+        r1_sw = await self.r1.get_switch_by_name_or_ip(name=name, ip=ip or "")
+        ingress_port = getattr(access_nbr, "remote_port", None)  # port on ICX facing the Cisco switch
+
+        return self._build_intermediate_hop(
+            access_nbr, order,
+            ingress_port=ingress_port,
+            egress_port=None,  # egress toward AP not known from Cisco CDP/LLDP
+            r1_data=r1_sw,
+        )
+
     async def _check_if_ap(
         self,
         last_sw_hop: Optional[Hop],
         edge: Dict,
         cisco_results: List[Dict],
     ) -> Optional[Hop]:
-        """Check if the device-facing port on edge switch connects to a Ruckus AP."""
-        cdp  = edge.get("cdp_neighbor")
-        lldp = edge.get("lldp_neighbor")
-        for nbr in [cdp, lldp]:
-            if not nbr:
-                continue
+        """
+        Check if the device-facing port on the edge switch connects directly to a Ruckus AP.
+        Uses all_cdp/all_lldp (always collected) filtered to the access port, so this works
+        regardless of whether the neighbor_info diagnostic option is enabled.
+        """
+        access_port = edge["mac_entry"].port if edge.get("mac_entry") else None
+
+        # Build candidate neighbor list from always-collected all_cdp/all_lldp
+        all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
+        access_nbrs = (
+            [n for n in all_nbrs if getattr(n, "local_port", "") == access_port]
+            if access_port else all_nbrs
+        )
+        # Fall back to per-port entries if all_cdp/all_lldp didn't capture this port
+        if not access_nbrs:
+            access_nbrs = [n for n in [edge.get("cdp_neighbor"), edge.get("lldp_neighbor")] if n]
+
+        for nbr in access_nbrs:
             combined = (
                 getattr(nbr, "remote_device", "") + " "
                 + getattr(nbr, "platform", "")
                 + " " + getattr(nbr, "system_description", "")
             ).lower()
-            if any(kw in combined for kw in ("ruckus", "r510", "r550", "r650", "r750", "t750", "h550")):
-                nbr_ip  = getattr(nbr, "remote_ip", None)
-                nbr_mac = normalize_mac(nbr.remote_device) if _looks_like_mac(nbr.remote_device) else None
-                ap = None
-                if nbr_mac:
-                    ap = await self.r1.get_ap_by_mac(nbr_mac)
-                if not ap and nbr_ip:
-                    for candidate in await self.r1.get_all_aps():
-                        if candidate.get("ip") == nbr_ip or candidate.get("ipAddress") == nbr_ip:
-                            ap = candidate
-                            break
-                if ap:
-                    ap_id = ap.get("id") or ap.get("apId")
-                    return await self._build_ap_hop(str(ap_id), (last_sw_hop.order + 1) if last_sw_hop else 10)
+
+            is_ruckus = any(kw in combined for kw in ("ruckus", "r510", "r550", "r650", "r750", "t750", "h550", "t310", "t610"))
+            is_icx    = "icx" in combined  # ICX = switch, not AP
+
+            if not is_ruckus or is_icx:
+                continue  # not a Ruckus AP
+
+            nbr_ip  = getattr(nbr, "remote_ip", None)
+            nbr_mac = normalize_mac(nbr.remote_device) if _looks_like_mac(nbr.remote_device) else None
+            ap = None
+            if nbr_mac:
+                ap = await self.r1.get_ap_by_mac(nbr_mac)
+            if not ap and nbr_ip:
+                for candidate in await self.r1.get_all_aps():
+                    if candidate.get("ip") == nbr_ip or candidate.get("ipAddress") == nbr_ip:
+                        ap = candidate
+                        break
+            if ap:
+                ap_id = ap.get("id") or ap.get("apId")
+                return await self._build_ap_hop(str(ap_id), (last_sw_hop.order + 1) if last_sw_hop else 10)
         return None
 
 
