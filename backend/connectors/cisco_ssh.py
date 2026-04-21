@@ -346,10 +346,13 @@ class CiscoSwitch:
         return None
 
     def _is_trunk_port(self, port: str) -> bool:
-        """show interfaces <port> trunk — if port appears, it's trunking."""
+        """show interfaces <port> trunk — Cisco outputs 'not-trunking' for access ports."""
         try:
             out = self._cmd(f"show interfaces {port} trunk")
-            return bool(re.search(r"trunking", out, re.IGNORECASE)) and "not trunking" not in out.lower()
+            # 'not-trunking' (hyphen) appears for access ports; match either form
+            if re.search(r"not.trunking", out, re.IGNORECASE):
+                return False
+            return bool(re.search(r"\btrunking\b", out, re.IGNORECASE))
         except Exception:
             return False
 
