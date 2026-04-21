@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Network Tracer</title>
+  <title>NetInspect</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
@@ -18,7 +18,7 @@
             <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
             <path d="M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
           </svg>
-          Network Tracer
+          NetInspect
         </div>
         <div class="header-meta" id="deviceSummary">
           <span class="badge badge-neutral">Loading devices…</span>
@@ -29,7 +29,7 @@
     <!-- Search bar -->
     <section class="search-section">
       <div class="search-card glass">
-        <div class="search-title">Trace a network device</div>
+        <div class="search-title">Inspect a network device</div>
         <div class="search-row">
           <input
             id="searchInput"
@@ -58,7 +58,7 @@
     <!-- Loading -->
     <div id="loadingState" class="loading-state hidden">
       <div class="spinner"></div>
-      <div class="loading-text">Tracing path across network…</div>
+      <div class="loading-text">Inspecting network path…</div>
       <div class="loading-sub">Querying FortiGate, Cisco switches, and Ruckus R1</div>
     </div>
 
@@ -76,7 +76,7 @@
         <div class="summary-left">
           <span id="summaryIcon" class="summary-status-icon">✓</span>
           <div>
-            <div id="summaryTitle" class="summary-title">Trace complete</div>
+            <div id="summaryTitle" class="summary-title">Inspection complete</div>
             <div id="summaryMeta" class="summary-meta"></div>
           </div>
         </div>

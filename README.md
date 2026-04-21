@@ -1,7 +1,7 @@
-# 🔍 Network Tracer
+# 🔍 NetInspect
 
-A multi-vendor network path tracer and diagnostic tool with a web-based GUI.  
-Enter a **MAC address**, **IP address**, or **FortiGate address name** and get a full end-to-end trace across your FortiGate firewall, Cisco switches, and Ruckus R1 wireless infrastructure — with automated health checks for every hop.
+A multi-vendor network troubleshooting platform with a web-based GUI.  
+Enter a **MAC address**, **IP address**, or **FortiGate address name** and get a full end-to-end inspection across your FortiGate firewall, Cisco switches, and Ruckus R1 wireless infrastructure — with automated health checks, diagnostics, and issue detection at every hop.
 
 > **Who uses it:** Anyone on your network opens a browser and goes to `http://<server-ip>:8080`. No install required on user machines.
 
@@ -216,8 +216,8 @@ Run the server directly on your Windows PC. Only you (or anyone who can reach yo
 
 Download the ZIP from GitHub and extract it, **or** clone via Git:
 ```cmd
-git clone https://github.com/ivillagomez/traffic-analyzer-tool.git
-cd traffic-analyzer-tool
+git clone https://github.com/ivillagomez/netinspect.git
+cd netinspect
 ```
 
 **2. Install dependencies**
@@ -278,12 +278,12 @@ Either SSH in (`ssh root@<unraid-ip>`) or go to **Tools → Terminal** in the Un
 **2. Clone the repo to appdata**
 ```bash
 cd /mnt/user/appdata
-git clone https://github.com/ivillagomez/traffic-analyzer-tool.git
+git clone https://github.com/ivillagomez/netinspect.git
 ```
 
 **3. Edit the config**
 ```bash
-nano /mnt/user/appdata/traffic-analyzer-tool/config.yaml
+nano /mnt/user/appdata/netinspect/config.yaml
 ```
 
 Find this line and replace the placeholder:
@@ -294,19 +294,19 @@ Save: `Ctrl+O` → Enter → `Ctrl+X`
 
 **4. Build the Docker image**
 ```bash
-cd /mnt/user/appdata/traffic-analyzer-tool
-docker build -t traffic-analyzer-tool:latest .
+cd /mnt/user/appdata/netinspect
+docker build -t netinspect:latest .
 ```
 *(This takes ~2 minutes the first time)*
 
 **5. Start the container**
 ```bash
 docker run -d \
-  --name traffic-analyzer-tool \
+  --name netinspect \
   --restart unless-stopped \
   -p 8080:8080 \
-  -v /mnt/user/appdata/traffic-analyzer-tool/config.yaml:/app/config.yaml:ro \
-  traffic-analyzer-tool:latest
+  -v /mnt/user/appdata/netinspect/config.yaml:/app/config.yaml:ro \
+  netinspect:latest
 ```
 
 **6. Verify it's running**
@@ -329,11 +329,11 @@ After step 4 (image build), you can also manage it through the Unraid web interf
 
 | Field | Value |
 |---|---|
-| Name | `traffic-analyzer-tool` |
-| Repository | `traffic-analyzer-tool:latest` |
+| Name | `netinspect` |
+| Repository | `netinspect:latest` |
 | Network Type | `Bridge` |
 | Port | Host: `8080` → Container: `8080` |
-| Path | Host: `/mnt/user/appdata/traffic-analyzer-tool/config.yaml` → Container: `/app/config.yaml` · Access: `Read Only` |
+| Path | Host: `/mnt/user/appdata/netinspect/config.yaml` → Container: `/app/config.yaml` · Access: `Read Only` |
 | Restart Policy | `Unless Stopped` |
 
 Click **Apply**.
@@ -342,7 +342,7 @@ Click **Apply**.
 
 After editing `config.yaml`, restart the container to apply changes:
 ```bash
-docker restart traffic-analyzer-tool
+docker restart netinspect
 ```
 Or click **Restart** on the Unraid Docker tab.
 
@@ -357,20 +357,20 @@ For a dedicated Ubuntu/Debian VM.
 curl -fsSL https://get.docker.com | sh
 
 # 2. Clone the repo
-git clone https://github.com/ivillagomez/traffic-analyzer-tool.git
-cd traffic-analyzer-tool
+git clone https://github.com/ivillagomez/netinspect.git
+cd netinspect
 
 # 3. Edit config
 nano config.yaml
 
 # 4. Build and run
-docker build -t traffic-analyzer-tool:latest .
+docker build -t netinspect:latest .
 docker run -d \
-  --name traffic-analyzer-tool \
+  --name netinspect \
   --restart unless-stopped \
   -p 8080:8080 \
   -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  traffic-analyzer-tool:latest
+  netinspect:latest
 ```
 
 Access at `http://<vm-ip>:8080`
@@ -383,8 +383,8 @@ If you have Docker Compose installed (included with Docker Desktop on Windows):
 
 ```bash
 # 1. Clone + edit config
-git clone https://github.com/ivillagomez/traffic-analyzer-tool.git
-cd traffic-analyzer-tool
+git clone https://github.com/ivillagomez/netinspect.git
+cd netinspect
 # Edit config.yaml with your credentials
 
 # 2. Build and start
@@ -440,7 +440,7 @@ server:
 1. Log in to your FortiGate web UI
 2. Go to **System → Administrators**
 3. Click **Create New → REST API Admin**
-4. Name it `network-tracer`, set **PKI Group** to none
+4. Name it `netinspect`, set **PKI Group** to none
 5. Under **Trusted Hosts**, add the IP of the machine running this tool (or `0.0.0.0/0` for any)
 6. Copy the generated API key — paste it as `access_token` in `config.yaml`
 
@@ -531,7 +531,7 @@ Edit `config.yaml` and change `server.port` to another value (e.g., `8090`), the
 ## 10. Project Structure
 
 ```
-traffic-analyzer-tool/
+netinspect/
 │
 ├── config.yaml                  ← Your credentials (never commit this with real tokens)
 ├── run.py                       ← Entry point: starts the web server

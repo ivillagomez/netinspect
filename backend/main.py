@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Network Tracer", version="1.0.0")
+app = FastAPI(title="NetInspect", version="1.0.0")
 
 _config = None
 _tracer: NetworkTracer = None
@@ -30,7 +30,7 @@ def get_tracer() -> NetworkTracer:
 
 @app.on_event("startup")
 async def startup():
-    logger.info("Network Tracer starting up...")
+    logger.info("NetInspect starting up...")
     try:
         get_tracer()
         logger.info("Configuration loaded successfully")
