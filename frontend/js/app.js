@@ -497,6 +497,46 @@ function buildHopCard(hop, idx) {
     }
   }
 
+  // FortiGate egress interface stats (from SSH)
+  if (hop.device_type === 'firewall' && hop.raw_data && hop.raw_data.interface_stats) {
+    const s = hop.raw_data.interface_stats;
+    if (Object.keys(s).length) {
+      body.innerHTML += `<div class="subsection-title">Egress Interface (${hop.egress_port || ''})</div>`;
+      body.appendChild(buildDetailGrid([
+        ['RX Packets', s.rx_packets != null ? s.rx_packets.toLocaleString() : '–'],
+        ['TX Packets', s.tx_packets != null ? s.tx_packets.toLocaleString() : '–'],
+        ['RX Errors',  s.rx_errors  != null ? s.rx_errors  : '–', s.rx_errors  > 0 ? 'warn' : 'ok'],
+        ['TX Errors',  s.tx_errors  != null ? s.tx_errors  : '–', s.tx_errors  > 0 ? 'warn' : 'ok'],
+        ['RX Drops',   s.rx_drops   != null ? s.rx_drops   : '–', s.rx_drops   > 0 ? 'warn' : 'ok'],
+        ['TX Drops',   s.tx_drops   != null ? s.tx_drops   : '–', s.tx_drops   > 0 ? 'warn' : 'ok'],
+        ['MTU',        s.mtu ? s.mtu + ' bytes' : '–'],
+      ]));
+    }
+  }
+
+  // Port-channel member links
+  if (hop.raw_data && hop.raw_data.etherchannel_members && hop.raw_data.etherchannel_members.length) {
+    body.innerHTML += `<div class="subsection-title">Port-Channel Members</div>`;
+    const rows = hop.raw_data.etherchannel_members.map(m => [
+      m.port, m.status, m.status === 'bundled' ? 'ok' : 'crit'
+    ]);
+    body.appendChild(buildDetailGrid(rows));
+  }
+
+  // Uplink interface error counters (Cisco side of links to upstream devices, e.g. Ruckus)
+  if (hop.raw_data && hop.raw_data.uplink_details && Object.keys(hop.raw_data.uplink_details).length) {
+    body.innerHTML += `<div class="subsection-title">Uplink Port Counters</div>`;
+    Object.entries(hop.raw_data.uplink_details).forEach(([port, d]) => {
+      const hasErrors = d.crc_errors > 0 || d.input_errors > 0 || d.output_errors > 0;
+      body.appendChild(buildDetailGrid([
+        [`${port} CRC`,   d.crc_errors,    d.crc_errors   > 0 ? 'crit' : 'ok'],
+        [`${port} In Err`,d.input_errors,  d.input_errors > 0 ? 'warn' : 'ok'],
+        [`${port} Out Err`,d.output_errors,d.output_errors > 0 ? 'warn' : 'ok'],
+        [`${port} MTU`,   d.mtu ? d.mtu + 'b' : '–'],
+      ]));
+    });
+  }
+
   // Raw error
   if (hop.raw_data && hop.raw_data.error) {
     body.innerHTML += `<div class="subsection-title">Connection Error</div>

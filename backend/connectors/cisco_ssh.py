@@ -111,6 +111,10 @@ class CiscoSwitch:
                     result["port_mac_table"] = self._get_mac_table_for_port(port)
                     result["is_trunk"] = self._is_trunk_port(port)
 
+                    # Port-channel: also collect member link status
+                    if port.upper().startswith("PO") or port.lower().startswith("port-channel"):
+                        result["etherchannel_members"] = self._get_etherchannel_members(port)
+
                     if options.interface_status or options.error_counters or options.mtu_check:
                         result["int_status"] = self._get_interface_status(port)
                         result["int_details"] = self._get_interface_details(port)
@@ -124,6 +128,14 @@ class CiscoSwitch:
 
                     if options.poe:
                         result["poe_status"] = self._get_poe_status(port)
+
+                # Uplink port error counters — checks health of links toward upstream devices
+                # (Ruckus switch errors are visible here on the Cisco side of that link)
+                result["uplink_details"] = self._get_uplink_details(
+                    result.get("all_cdp", []) + result.get("all_lldp", []),
+                    result.get("mac_entry"),
+                    options,
+                )
 
             except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
                 result["error"] = str(e)
@@ -430,6 +442,53 @@ class CiscoSwitch:
         except Exception as e:
             logger.debug(f"[{self.name}] poe error: {e}")
         return None
+
+    def _get_etherchannel_members(self, port: str) -> List[Dict]:
+        """show etherchannel <group> summary — member ports and bundle state for a Po interface."""
+        members = []
+        try:
+            m = re.search(r"\d+", port)
+            if not m:
+                return members
+            group = m.group(0)
+            out = self._cmd(f"show etherchannel {group} summary")
+            # Matches: Gi1/0/1(P)  Gi1/0/2(D)  etc.
+            pattern = re.compile(r"((?:Gi|Te|Fa|Twe|Hu)[\d/]+)\((\w)\)", re.IGNORECASE)
+            flag_map = {
+                "P": "bundled", "D": "down", "s": "suspended",
+                "I": "stand-alone", "H": "hot-standby", "w": "waiting",
+            }
+            for match in pattern.finditer(out):
+                iface, flag = match.groups()
+                members.append({
+                    "port": shorten_interface(iface),
+                    "status": flag_map.get(flag, flag),
+                })
+        except Exception as e:
+            logger.debug(f"[{self.name}] etherchannel error: {e}")
+        return members
+
+    def _get_uplink_details(self, all_neighbors: list, mac_entry, options) -> Dict:
+        """
+        Collect interface details on all uplink ports (every CDP/LLDP neighbor port that
+        is NOT the access port where the end device was found).  This lets us report error
+        counters on the Cisco ↔ Ruckus link even though we can't SSH into the Ruckus.
+        Only runs when error_counters or interface_status option is enabled.
+        """
+        if not (options.error_counters or options.interface_status):
+            return {}
+        access_port = mac_entry.port if mac_entry else None
+        seen = set()
+        result = {}
+        for n in all_neighbors:
+            lp = getattr(n, "local_port", None)
+            if not lp or lp == access_port or lp in seen:
+                continue
+            seen.add(lp)
+            details = self._get_interface_details(lp)
+            if details:
+                result[lp] = details
+        return result
 
     # ------------------------------------------------------------------
     # CDP / LLDP parsing helpers

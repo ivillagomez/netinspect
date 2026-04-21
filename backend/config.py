@@ -9,6 +9,9 @@ class FortiGateConfig(BaseModel):
     port: int = 443
     access_token: str
     verify_ssl: bool = False
+    ssh_username: Optional[str] = None
+    ssh_password: Optional[str] = None
+    ssh_port: int = 22
 
 
 class CiscoSwitchConfig(BaseModel):

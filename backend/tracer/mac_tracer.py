@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 
 from backend.config import AppConfig
 from backend.connectors.fortigate import FortiGateClient, normalize_mac
+from backend.connectors.fortigate_ssh import FortiGateSSH
 from backend.connectors.cisco_ssh import CiscoSwitch
 from backend.connectors.ruckus_r1 import RuckusR1Client
 from backend.models import (
@@ -22,6 +23,7 @@ class NetworkTracer:
     def __init__(self, config: AppConfig):
         self.config = config
         self.fg = FortiGateClient(config.fortigate)
+        self.fg_ssh = FortiGateSSH(config.fortigate)
         self.cisco_switches = [CiscoSwitch(sw) for sw in config.cisco_switches]
         self.r1 = RuckusR1Client(config.ruckus_r1)
 
@@ -358,13 +360,25 @@ class NetworkTracer:
         vendor = "Fortinet"
         model = ""
         version = ""
+        interface_stats = {}
         try:
             hostname = await self.fg.get_hostname()
             arp_entry = await self.fg.get_arp_entry(mac=mac)
             fg_interface = arp_entry.get("interface", "") if arp_entry else ""
-            platform = await self.fg.get_platform_info()
-            model   = platform.get("model", "")
-            version = platform.get("version", "")
+
+            # SSH gives richer platform info and egress interface error counters
+            ssh_data = await self.fg_ssh.gather(fg_interface)
+            model   = ssh_data.get("model", "")
+            version = ssh_data.get("version", "")
+            if ssh_data.get("hostname"):
+                hostname = ssh_data["hostname"]
+            interface_stats = ssh_data.get("interface_stats", {})
+
+            # Fall back to REST API for model/version if SSH didn't return them
+            if not model:
+                platform = await self.fg.get_platform_info()
+                model   = platform.get("model", "")
+                version = version or platform.get("version", "")
         except Exception:
             pass
 
@@ -377,7 +391,7 @@ class NetworkTracer:
             model=model,
             software_version=version,
             egress_port=fg_interface or None,
-            raw_data={"arp_interface": fg_interface},
+            raw_data={"arp_interface": fg_interface, "interface_stats": interface_stats},
         )
 
     def _build_cisco_hop(
@@ -429,6 +443,8 @@ class NetworkTracer:
                 "version": ver,
                 "is_trunk": raw.get("is_trunk", False),
                 "error": raw.get("error"),
+                "etherchannel_members": raw.get("etherchannel_members", []),
+                "uplink_details": raw.get("uplink_details", {}),
             },
         )
 
