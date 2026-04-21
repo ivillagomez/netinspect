@@ -90,6 +90,20 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/r1/test", dependencies=[Depends(verify_api_key)])
+async def r1_test():
+    """Probe Ruckus One API and return the raw HTTP result for diagnostics."""
+    tracer = get_tracer()
+    result = await tracer.r1.test_connection()
+    # Redact the API key from headers before returning
+    if "headers_sent" in result:
+        hdrs = result["headers_sent"]
+        for k in list(hdrs.keys()):
+            if "auth" in k.lower() or "key" in k.lower():
+                hdrs[k] = hdrs[k][:8] + "…" if len(hdrs.get(k, "")) > 8 else "***"
+    return result
+
+
 @app.get("/api/ui-config")
 async def ui_config():
     """Non-sensitive config the frontend needs to bootstrap."""

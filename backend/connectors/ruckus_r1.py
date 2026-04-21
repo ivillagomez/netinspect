@@ -37,13 +37,38 @@ class RuckusR1Client:
         try:
             r = await self._get_client().get(url, params=params or {})
             if r.status_code == 401:
-                logger.error("R1 API: Unauthorized — check API key")
+                logger.error(
+                    "R1 API: 401 Unauthorized on %s — API key rejected or expired. "
+                    "Response: %s", path, r.text[:200]
+                )
                 return None
-            r.raise_for_status()
+            if not r.is_success:
+                logger.warning(
+                    "R1 API: HTTP %s on %s — %s", r.status_code, url, r.text[:300]
+                )
+                return None
             return r.json()
-        except Exception as e:
-            logger.warning(f"R1 GET {path} failed: {e}")
+        except httpx.HTTPStatusError as e:
+            logger.warning("R1 GET %s → HTTP %s: %s", path, e.response.status_code, e.response.text[:300])
             return None
+        except Exception as e:
+            logger.warning("R1 GET %s failed: %s", path, e)
+            return None
+
+    async def test_connection(self) -> Dict:
+        """Probe R1 and return a diagnostic dict with the raw HTTP result."""
+        url = f"{self.base_url}/v1/venues"
+        try:
+            r = await self._get_client().get(url)
+            return {
+                "url": url,
+                "status_code": r.status_code,
+                "ok": r.is_success,
+                "response_snippet": r.text[:500],
+                "headers_sent": dict(self._get_client().headers),
+            }
+        except Exception as e:
+            return {"url": url, "error": str(e), "ok": False}
 
     async def close(self):
         if self._client and not self._client.is_closed:
