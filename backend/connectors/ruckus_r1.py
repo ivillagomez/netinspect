@@ -144,17 +144,21 @@ class RuckusR1Client:
         if not cfg.client_id or not cfg.client_secret:
             return cfg.api_key  # legacy static JWT / api_key fallback
 
-        # Derive the auth-server base URL by stripping the "api." subdomain.
-        # api.asia.ruckus.cloud/oauth2/token → 302 to asia.ruckus.cloud/oauth2/authorization/idm
-        # The actual token endpoint lives on asia.ruckus.cloud, not api.asia.ruckus.cloud.
+        # Token endpoint: POST https://asia.ruckus.cloud/oauth2/token/{tenantId}
+        # Derive auth-server base by stripping the "api." subdomain.
         import re as _re
         auth_base = _re.sub(r"^(https?://)api\.", r"\1", self.base_url)
+        tenant_id = cfg.tenant_id or ""
 
         # Candidate token endpoint URLs (tried in order)
-        candidates = [
-            f"{auth_base}/oauth2/token",         # https://asia.ruckus.cloud/oauth2/token  ← likely winner
-            f"{self.base_url}/oauth2/token",     # api.asia.ruckus.cloud (redirects to SSO — skipped)
-            f"{self.base_url}/token",
+        candidates = []
+        if tenant_id:
+            # Correct endpoint (tenant-scoped)
+            candidates.append(f"{auth_base}/oauth2/token/{tenant_id}")
+        # Fallbacks (will redirect to SSO, but we handle that gracefully)
+        candidates += [
+            f"{auth_base}/oauth2/token",
+            f"{self.base_url}/oauth2/token",
             f"{self.base_url}/v1/oauth/token",
         ]
         for url in candidates:
@@ -537,16 +541,19 @@ class RuckusR1Client:
             except Exception as e:
                 return {"error": str(e)}
 
-        result["probes"] = {
-            f"{base}/oauth2/token (POST)":       await _raw_probe(f"{base}/oauth2/token"),
-            f"{auth_base}/oauth2/token (POST)":  await _raw_probe(f"{auth_base}/oauth2/token"),
-            f"{auth_base}/.well-known/openid-configuration (GET)":
-                await _raw_probe(f"{auth_base}/.well-known/openid-configuration", use_get=True),
-            f"{base}/.well-known/openid-configuration (GET)":
-                await _raw_probe(f"{base}/.well-known/openid-configuration", use_get=True),
-        }
-        # legacy key for backward compat
-        result["oauth2_redirect_probe"] = result["probes"][f"{base}/oauth2/token (POST)"]
+        tenant_id = cfg.tenant_id or ""
+        probes: dict = {}
+        if tenant_id:
+            probes[f"{auth_base}/oauth2/token/{tenant_id} (POST)"] = \
+                await _raw_probe(f"{auth_base}/oauth2/token/{tenant_id}")
+        probes[f"{base}/oauth2/token (POST)"]      = await _raw_probe(f"{base}/oauth2/token")
+        probes[f"{auth_base}/oauth2/token (POST)"] = await _raw_probe(f"{auth_base}/oauth2/token")
+        probes[f"{auth_base}/.well-known/openid-configuration (GET)"] = \
+            await _raw_probe(f"{auth_base}/.well-known/openid-configuration", use_get=True)
+        result["probes"] = probes
+        result["tenant_id_configured"] = bool(tenant_id)
+        # legacy key
+        result["oauth2_redirect_probe"] = probes[f"{base}/oauth2/token (POST)"]
 
         # Step 1: token exchange — probe each candidate URL directly
         candidates = [

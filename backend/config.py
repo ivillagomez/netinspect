@@ -28,6 +28,9 @@ class RuckusR1Config(BaseModel):
     # OAuth2 client credentials (from portal: Administration → Settings → Application Tokens)
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
+    # Tenant ID — visible in the portal URL after login: asia.ruckus.cloud/<tenantId>/...
+    # Required for token exchange: POST https://asia.ruckus.cloud/oauth2/token/{tenantId}
+    tenant_id: Optional[str] = None
     # Legacy: static Bearer token / direct JWT (used if client_id not set)
     api_key: Optional[str] = None
 
