@@ -687,6 +687,9 @@ class NetworkTracer:
             name  = ap.get("name") or ap.get("apName") or f"AP-{ap_id}"
             ip    = ap.get("ip") or ap.get("ipAddress")
             model = ap.get("model") or ap.get("modelName") or ""
+            # Redact sensitive fields before storing in raw_data
+            _REDACT = {"loginPassword", "password", "secret", "apiKey", "api_key"}
+            safe_ap = {k: "***" if k in _REDACT else v for k, v in ap.items()}
             return Hop(
                 order=order,
                 device_type=DeviceType.RUCKUS_AP,
@@ -694,7 +697,7 @@ class NetworkTracer:
                 device_ip=ip,
                 vendor="Ruckus",
                 model=model,
-                raw_data={"ap_id": ap_id, "r1_data": ap},
+                raw_data={"ap_id": ap_id, "r1_data": safe_ap},
             )
         except Exception as e:
             logger.warning(f"R1 AP hop failed: {e}")
