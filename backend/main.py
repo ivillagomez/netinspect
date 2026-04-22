@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import os
-from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import load_config
 from backend.models import TraceRequest, TraceResult
@@ -24,6 +25,34 @@ _trace_semaphore = asyncio.Semaphore(5)
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+_frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+_index_html   = os.path.join(_frontend_dir, "index.html")
+
+
+# ── SPA middleware ─────────────────────────────────────────────────────────────
+# For GET requests that aren't API or static-file paths, serve index.html so the
+# React/JS router can handle client-side navigation.  This replaces the greedy
+# /{full_path:path} catch-all route which Starlette would match before specific
+# API routes.
+class SPAMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if (
+            response.status_code == 404
+            and request.method == "GET"
+            and not path.startswith("/api/")
+            and not path.startswith("/static/")
+            and os.path.isfile(_index_html)
+        ):
+            logger.debug("SPA fallback: %s → index.html", path)
+            return FileResponse(_index_html)
+        return response
+
+app.add_middleware(SPAMiddleware)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def get_tracer() -> NetworkTracer:
     global _config, _tracer
@@ -52,7 +81,7 @@ async def startup():
         logger.error(f"Startup config error: {e}")
 
 
-# --- API Routes ---
+# ── API routes ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/trace", response_model=TraceResult, dependencies=[Depends(verify_api_key)])
 async def trace(request: TraceRequest):
@@ -76,9 +105,9 @@ async def list_devices():
     try:
         cfg = load_config()
         return {
-            "fortigate": {"name": "FortiGate"},
+            "fortigate":      {"name": "FortiGate"},
             "cisco_switches": [{"name": sw.name} for sw in cfg.cisco_switches],
-            "ruckus_r1": {"name": "Ruckus One"},
+            "ruckus_r1":      {"name": "Ruckus One"},
         }
     except Exception as e:
         logger.error(f"Devices listing error: {e}", exc_info=True)
@@ -93,9 +122,10 @@ async def health():
 @app.get("/api/r1/test", dependencies=[Depends(verify_api_key)])
 async def r1_test():
     """Probe Ruckus One API and return the raw HTTP result for diagnostics."""
+    logger.info("R1 test endpoint called")
     tracer = get_tracer()
     result = await tracer.r1.test_connection()
-    # Redact the API key from headers before returning
+    # Redact auth headers before returning
     if "headers_sent" in result:
         hdrs = result["headers_sent"]
         for k in list(hdrs.keys()):
@@ -111,24 +141,11 @@ async def ui_config():
     return {"api_key_required": bool(cfg.server.api_key)}
 
 
-# --- Static frontend ---
-
-_frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+# ── Static frontend ────────────────────────────────────────────────────────────
 
 if os.path.isdir(_frontend_dir):
     app.mount("/static", StaticFiles(directory=_frontend_dir), name="static")
 
     @app.get("/")
     async def root():
-        return FileResponse(os.path.join(_frontend_dir, "index.html"))
-
-    @app.get("/{full_path:path}")
-    async def catch_all(full_path: str):
-        # Never intercept API routes — return 404 so FastAPI's own handler responds
-        if full_path.startswith("api/") or full_path == "api":
-            raise HTTPException(status_code=404, detail="Not found")
-        real_frontend = os.path.realpath(_frontend_dir)
-        candidate = os.path.realpath(os.path.join(_frontend_dir, full_path))
-        if os.path.isfile(candidate) and candidate.startswith(real_frontend + os.sep):
-            return FileResponse(candidate)
-        return FileResponse(os.path.join(_frontend_dir, "index.html"))
+        return FileResponse(_index_html)
