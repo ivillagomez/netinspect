@@ -64,12 +64,14 @@ class RuckusR1Client:
             try:
                 async with httpx.AsyncClient(
                     timeout=15.0, verify=True,
+                    follow_redirects=True,          # follow 302 → actual token endpoint
                     headers={"Accept": "application/json"},
                 ) as c:
                     r = await c.post(token_url, **post_kwargs)
+                final_url = str(r.url)
                 logger.info(
-                    "R1 token [%s %s]: HTTP %s — %s",
-                    content_type, token_url, r.status_code, r.text[:200],
+                    "R1 token [%s]: HTTP %s  url=%s — %s",
+                    content_type, r.status_code, final_url, r.text[:200],
                 )
                 if r.is_success:
                     data  = r.json()
@@ -78,7 +80,7 @@ class RuckusR1Client:
                         expires_in = int(data.get("expires_in", 3600))
                         self._token_expires_at = time.time() + expires_in - 60
                         logger.info(
-                            "R1 token obtained from %s (expires_in=%ds)", token_url, expires_in
+                            "R1 token obtained (url=%s, expires_in=%ds)", final_url, expires_in
                         )
                         return token, r.status_code, r.text[:200]
                 return None, r.status_code, r.text[:200]
