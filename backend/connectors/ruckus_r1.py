@@ -79,6 +79,7 @@ class RuckusR1Client:
             }),
         ]
 
+        last_error = "no styles attempted"
         for style, post_kwargs in credential_styles:
             url = token_url
             try:
@@ -96,17 +97,19 @@ class RuckusR1Client:
                         logger.info("R1 token [%s]: HTTP %s %s → %s",
                                     style, r.status_code, url, location)
                         if not location:
+                            last_error = f"{style}: {r.status_code} redirect with no Location"
                             break
                         # SSO / authorization-code initiation redirect — NOT a token endpoint.
                         # (Spring Security pattern: /oauth2/authorization/{registrationId})
-                        # Bail out so _fetch_token tries the next candidate URL instead.
+                        # Return a sentinel so callers can see this URL is wrong.
                         if "/oauth2/authorization" in location or "/login" in location:
                             logger.info(
-                                "R1 token [%s]: SSO redirect detected (%s) — "
-                                "this URL is not the token endpoint, skipping",
+                                "R1 token [%s]: SSO redirect detected → %s — "
+                                "this URL is not the token endpoint",
                                 style, location,
                             )
-                            break
+                            last_error = f"{style}: SSO redirect → {location}"
+                            break   # try next credential style
                         url = location
                         continue        # POST again to Location
 
@@ -122,14 +125,15 @@ class RuckusR1Client:
                             logger.info("R1 token obtained via %s (url=%s, expires_in=%ds)",
                                         style, url, expires_in)
                             return token, r.status_code, r.text[:200]
-                    # Non-success from a real endpoint — stop, report
-                    return None, r.status_code, r.text[:200]
+                    # Non-success from a real endpoint — stop trying, report
+                    return None, r.status_code, r.text[:300]
 
             except Exception as e:
+                last_error = f"{style}: exception — {e}"
                 logger.warning("R1 token [%s %s] error: %s", style, token_url, e)
                 # Fall through to next credential style
 
-        return None, 0, "all credential styles failed"
+        return None, 0, last_error
 
     async def _fetch_token(self) -> Optional[str]:
         """
@@ -507,33 +511,44 @@ class RuckusR1Client:
             "auth_mode":   "oauth2_client_credentials" if cfg.client_id else "static_bearer",
         }
 
-        # Step 0: raw redirect probe — single no-follow POST to reveal Location header
         cfg = self.config
-        try:
-            async with httpx.AsyncClient(
-                timeout=10.0, verify=True,
-                follow_redirects=False,
-                headers={"Accept": "application/json"},
-            ) as c:
-                r0 = await c.post(
-                    f"{base}/oauth2/token",
-                    data={
-                        "grant_type":    "client_credentials",
-                        "client_id":     cfg.client_id,
-                        "client_secret": cfg.client_secret,
-                    },
-                )
-            result["oauth2_redirect_probe"] = {
-                "status":   r0.status_code,
-                "location": r0.headers.get("location"),
-                "snippet":  r0.text[:300],
-            }
-        except Exception as e:
-            result["oauth2_redirect_probe"] = {"error": str(e)}
-
-        # Step 1: token exchange — probe each candidate URL directly
         import re as _re
         auth_base = _re.sub(r"^(https?://)api\.", r"\1", base)
+
+        # ── Step 0: raw no-follow probes to reveal redirect chains ────────────
+        async def _raw_probe(url: str, use_get: bool = False) -> dict:
+            try:
+                form_data = {
+                    "grant_type":    "client_credentials",
+                    "client_id":     cfg.client_id,
+                    "client_secret": cfg.client_secret,
+                }
+                async with httpx.AsyncClient(
+                    timeout=10.0, verify=True,
+                    follow_redirects=False,
+                    headers={"Accept": "application/json"},
+                ) as c:
+                    r = await c.get(url) if use_get else await c.post(url, data=form_data)
+                return {
+                    "status":   r.status_code,
+                    "location": r.headers.get("location"),
+                    "snippet":  r.text[:400],
+                }
+            except Exception as e:
+                return {"error": str(e)}
+
+        result["probes"] = {
+            f"{base}/oauth2/token (POST)":       await _raw_probe(f"{base}/oauth2/token"),
+            f"{auth_base}/oauth2/token (POST)":  await _raw_probe(f"{auth_base}/oauth2/token"),
+            f"{auth_base}/.well-known/openid-configuration (GET)":
+                await _raw_probe(f"{auth_base}/.well-known/openid-configuration", use_get=True),
+            f"{base}/.well-known/openid-configuration (GET)":
+                await _raw_probe(f"{base}/.well-known/openid-configuration", use_get=True),
+        }
+        # legacy key for backward compat
+        result["oauth2_redirect_probe"] = result["probes"][f"{base}/oauth2/token (POST)"]
+
+        # Step 1: token exchange — probe each candidate URL directly
         candidates = [
             f"{auth_base}/oauth2/token",
             f"{base}/oauth2/token",
