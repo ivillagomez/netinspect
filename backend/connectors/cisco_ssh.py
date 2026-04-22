@@ -86,12 +86,38 @@ class CiscoSwitch:
     # ------------------------------------------------------------------
 
     async def gather_all(self, mac: str, options: Optional[DiagnosticOptions] = None) -> Dict:
-        """Connect once, run all relevant commands, disconnect. Returns raw dict."""
+        """Connect once, run all relevant commands, disconnect. Returns raw dict.
+
+        If snmp_community is set in config, SNMP runs concurrently with SSH and
+        provides MAC entry, system info, and interface stats via IF-MIB/Q-BRIDGE-MIB.
+        SSH always runs for CDP/LLDP, STP, PoE, port-channel, and IOS version.
+        """
         if options is None:
             options = DiagnosticOptions()
         cisco_mac = mac_to_cisco(mac)
         result = {"switch": self.name, "host": self.host, "reachable": False}
 
+        # ------------------------------------------------------------------
+        # Optional SNMP client — instantiated only if configured + available
+        # ------------------------------------------------------------------
+        snmp = None
+        if self.config.snmp_community:
+            try:
+                from backend.connectors.cisco_snmp import CiscoSNMP, HAS_SNMP
+                if HAS_SNMP:
+                    snmp = CiscoSNMP(
+                        self.host,
+                        self.config.snmp_community,
+                        port=self.config.snmp_port,
+                        version=self.config.snmp_version,
+                    )
+                    logger.debug("[%s] SNMP fast path enabled (community configured)", self.name)
+            except Exception as e:
+                logger.debug("[%s] SNMP client init failed: %s", self.name, e)
+
+        # ------------------------------------------------------------------
+        # SSH work (sync, runs in thread executor) — unchanged
+        # ------------------------------------------------------------------
         def _work():
             try:
                 self._connect()
@@ -149,7 +175,71 @@ class CiscoSwitch:
                 self._disconnect()
             return result
 
-        return await self._run(_work)
+        # ------------------------------------------------------------------
+        # Execute: SSH + SNMP concurrently when SNMP is available
+        # ------------------------------------------------------------------
+        if snmp is not None:
+            ssh_result, snmp_mac, snmp_sys = await asyncio.gather(
+                self._run(_work),
+                snmp.get_mac_entry(mac),
+                snmp.get_system_info(),
+                return_exceptions=True,
+            )
+
+            # _work() catches its own exceptions and always returns the dict;
+            # guard anyway in case something bubbled out of run_in_executor.
+            if isinstance(ssh_result, dict):
+                result = ssh_result
+
+            result["snmp_source"] = False
+
+            # Merge SNMP system info
+            if snmp_sys and not isinstance(snmp_sys, Exception):
+                result["snmp_system"] = snmp_sys
+                logger.debug("[%s] SNMP sysName=%s model=%s ios=%s",
+                             self.name,
+                             snmp_sys.get("hostname"),
+                             snmp_sys.get("model"),
+                             snmp_sys.get("ios_version"))
+            elif isinstance(snmp_sys, Exception):
+                logger.debug("[%s] SNMP system info failed: %s", self.name, snmp_sys)
+
+            # Merge SNMP MAC entry — fill in if SSH missed it, always store raw
+            if snmp_mac and not isinstance(snmp_mac, Exception):
+                result["snmp_mac"] = snmp_mac
+                result["snmp_source"] = True
+                if not result.get("mac_entry"):
+                    result["mac_entry"] = MACEntry(
+                        mac=snmp_mac["mac"],
+                        vlan=int(snmp_mac.get("vlan", 0)),
+                        port=snmp_mac["port"],
+                        entry_type="dynamic",
+                    )
+                    logger.info("[%s] MAC entry from SNMP (SSH missed): port=%s vlan=%s",
+                                self.name, snmp_mac["port"], snmp_mac.get("vlan"))
+                else:
+                    logger.debug("[%s] SNMP confirmed MAC on port=%s vlan=%s",
+                                 self.name, snmp_mac["port"], snmp_mac.get("vlan"))
+
+                # SNMP interface stats for the port — richer than CLI counters
+                if options.interface_status or options.error_counters or options.mtu_check:
+                    try:
+                        snmp_stats = await snmp.get_interface_stats(snmp_mac["port"])
+                        if snmp_stats:
+                            result["snmp_int_stats"] = snmp_stats
+                            logger.debug("[%s] SNMP if-stats port=%s: %s",
+                                         self.name, snmp_mac["port"], snmp_stats)
+                    except Exception as e:
+                        logger.debug("[%s] SNMP interface stats failed: %s", self.name, e)
+
+            elif isinstance(snmp_mac, Exception):
+                logger.debug("[%s] SNMP MAC lookup failed: %s", self.name, snmp_mac)
+
+        else:
+            # No SNMP configured — pure SSH path (original behaviour)
+            result = await self._run(_work)
+
+        return result
 
     async def get_all_neighbors(self) -> Dict:
         """Collect CDP+LLDP neighbor tables, ARP table, and MAC summary (for topology building)."""

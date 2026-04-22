@@ -579,6 +579,15 @@ class NetworkTracer:
         model    = ver.get("model", "")
         ios_ver  = ver.get("ios_version", "")
 
+        # SNMP can supplement model/version when SSH parsing came up empty
+        snmp_sys = raw.get("snmp_system") or {}
+        if not model:
+            model = snmp_sys.get("model", "")
+        if not ios_ver:
+            ios_ver = snmp_sys.get("ios_version", "")
+        if hostname in ("Unknown Switch", raw.get("switch", "")) and snmp_sys.get("hostname"):
+            hostname = snmp_sys["hostname"]
+
         mac_entry = raw.get("mac_entry")
         vlan = mac_entry.vlan if (is_edge and mac_entry) else None
 
@@ -615,6 +624,11 @@ class NetworkTracer:
                 "etherchannel_members": raw.get("etherchannel_members", []),
                 "uplink_details": raw.get("uplink_details", {}),
                 "system_mtu": raw.get("system_mtu", {}),
+                # SNMP supplemental data (present only when snmp_community is configured)
+                "snmp_source": raw.get("snmp_source", False),
+                "snmp_system": raw.get("snmp_system"),
+                "snmp_mac": raw.get("snmp_mac"),
+                "snmp_int_stats": raw.get("snmp_int_stats"),
             },
         )
 

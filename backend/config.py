@@ -21,6 +21,10 @@ class CiscoSwitchConfig(BaseModel):
     password: str
     device_type: str = "cisco_ios"
     timeout: int = 30
+    # SNMP — optional fast path (replaces SSH for MAC lookup + interface stats)
+    snmp_community: Optional[str] = None   # None = SNMP disabled
+    snmp_port: int = 161
+    snmp_version: str = "2c"               # "1" or "2c"
 
 
 class RuckusR1Config(BaseModel):
