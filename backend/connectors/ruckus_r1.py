@@ -42,47 +42,79 @@ class RuckusR1Client:
     # OAuth2 Client Credentials token exchange
     # ------------------------------------------------------------------
 
+    async def _try_token_url(self, token_url: str, cfg) -> tuple:
+        """
+        Attempt one token exchange URL. Returns (token_or_None, status_code, response_snippet).
+        Tries form-encoded body first (standard OAuth2), then JSON body as fallback.
+        """
+        for content_type, post_kwargs in [
+            # Attempt 1: standard form-encoded (RFC 6749)
+            ("form", dict(data={
+                "grant_type":    "client_credentials",
+                "client_id":     cfg.client_id,
+                "client_secret": cfg.client_secret,
+            })),
+            # Attempt 2: JSON body (some non-standard providers)
+            ("json", dict(json={
+                "grant_type":    "client_credentials",
+                "client_id":     cfg.client_id,
+                "client_secret": cfg.client_secret,
+            })),
+        ]:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=15.0, verify=True,
+                    headers={"Accept": "application/json"},
+                ) as c:
+                    r = await c.post(token_url, **post_kwargs)
+                logger.info(
+                    "R1 token [%s %s]: HTTP %s — %s",
+                    content_type, token_url, r.status_code, r.text[:200],
+                )
+                if r.is_success:
+                    data  = r.json()
+                    token = data.get("access_token")
+                    if token:
+                        expires_in = int(data.get("expires_in", 3600))
+                        self._token_expires_at = time.time() + expires_in - 60
+                        logger.info(
+                            "R1 token obtained from %s (expires_in=%ds)", token_url, expires_in
+                        )
+                        return token, r.status_code, r.text[:200]
+                return None, r.status_code, r.text[:200]
+            except Exception as e:
+                logger.warning("R1 token [%s %s] error: %s", content_type, token_url, e)
+                return None, 0, str(e)
+        return None, 0, "all attempts failed"
+
     async def _fetch_token(self) -> Optional[str]:
         """
         Exchange client_id + client_secret for a JWT access token.
-        Ruckus One uses OAuth2 client_credentials grant.
-        Token endpoint: POST {base_url}/oauth2/token  (form-encoded body)
+        Tries multiple candidate token endpoint URLs in order.
         """
         cfg = self.config
         if not cfg.client_id or not cfg.client_secret:
-            # Fall back to static api_key as Bearer token (legacy / direct JWT)
-            return cfg.api_key
+            return cfg.api_key  # legacy static JWT / api_key fallback
 
-        token_url = f"{self.base_url}/oauth2/token"
-        try:
-            async with httpx.AsyncClient(timeout=15.0, verify=True) as c:
-                r = await c.post(
-                    token_url,
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id":     cfg.client_id,
-                        "client_secret": cfg.client_secret,
-                    },
-                    headers={"Accept": "application/json"},
-                )
-                logger.info("R1 token exchange: HTTP %s from %s", r.status_code, token_url)
-                if not r.is_success:
-                    logger.error(
-                        "R1 token exchange failed: HTTP %s — %s", r.status_code, r.text[:300]
-                    )
-                    return None
-                data = r.json()
-                token = data.get("access_token")
-                expires_in = int(data.get("expires_in", 3600))
-                self._token_expires_at = time.time() + expires_in - 60  # 60 s buffer
-                logger.info(
-                    "R1 token obtained (expires_in=%ds, type=%s)",
-                    expires_in, data.get("token_type", "?"),
-                )
+        # Candidate token endpoint URLs (tried in order)
+        candidates = [
+            f"{self.base_url}/oauth2/token",
+            f"{self.base_url}/token",
+            f"{self.base_url}/v1/oauth/token",
+        ]
+        for url in candidates:
+            token, status, snippet = await self._try_token_url(url, cfg)
+            if token:
                 return token
-        except Exception as e:
-            logger.error("R1 token exchange error: %s", e)
-            return None
+            if status not in (0, 404, 405):
+                # Got a real response (401, 400, etc.) — this is the right URL, wrong creds
+                logger.error(
+                    "R1 token exchange at %s → HTTP %s: %s", url, status, snippet
+                )
+                return None
+            # 404/405/0 = wrong endpoint, try next
+        logger.error("R1 token exchange: no working endpoint found among %s", candidates)
+        return None
 
     async def _get_token(self) -> Optional[str]:
         """Return a valid access token, refreshing if expired."""
@@ -424,14 +456,28 @@ class RuckusR1Client:
             "auth_mode":   "oauth2_client_credentials" if cfg.client_id else "static_bearer",
         }
 
-        # Step 1: token exchange
-        self._access_token = None   # force fresh fetch
-        token = await self._get_token()
+        # Step 1: token exchange — probe each candidate URL directly
+        cfg = self.config
+        candidates = [
+            f"{self.base_url}/oauth2/token",
+            f"{self.base_url}/token",
+            f"{self.base_url}/v1/oauth/token",
+        ]
+        token_probes = {}
+        token = None
+        for url in candidates:
+            t, status, snippet = await self._try_token_url(url, cfg)
+            token_probes[url] = {"status": status, "snippet": snippet[:200]}
+            if t:
+                token = t
+                self._access_token = t
+                break
+        result["token_probes"]  = token_probes
         result["token_obtained"] = bool(token)
         result["token_prefix"]   = token[:20] + "…" if token else None
 
         if not token:
-            result["error"] = "Token exchange failed — check client_id/client_secret and token endpoint"
+            result["error"] = "Token exchange failed on all candidate URLs — see token_probes"
             return result
 
         hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
