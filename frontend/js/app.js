@@ -281,29 +281,42 @@ function renderPath(path) {
     const portText = [hop.ingress_port, hop.egress_port].filter(Boolean).join(' → ');
     portInfo.textContent = portText;
 
-    node.appendChild(iconWrap);
-    node.appendChild(label);
-    node.appendChild(sub);
-    if (portText) node.appendChild(portInfo);
+    // Fixed-height icon row — keeps all icons at the same vertical position
+    const nodeIconRow = document.createElement('div');
+    nodeIconRow.className = 'node-icon-row';
+    nodeIconRow.appendChild(iconWrap);
+
+    // Variable-height info row — text sits below, doesn't affect icon alignment
+    const nodeInfo = document.createElement('div');
+    nodeInfo.className = 'node-info';
+    nodeInfo.appendChild(label);
+    nodeInfo.appendChild(sub);
+    nodeInfo.appendChild(portInfo);  // always append even if empty
+
+    node.appendChild(nodeIconRow);
+    node.appendChild(nodeInfo);
     flow.appendChild(node);
 
     if (idx < path.length - 1) {
       const arrow = document.createElement('div');
       arrow.className = 'path-arrow';
 
-      // Show connection ports between this hop and the next
+      // Fixed-height arrow icon row — same height as node-icon-row so line aligns with icons
+      const arrowIconRow = document.createElement('div');
+      arrowIconRow.className = 'arrow-icon-row';
+
       const nextHop = path[idx + 1];
       const connLabel = buildConnLabel(hop, nextHop);
-
       if (connLabel) {
         const lbl = document.createElement('div');
         lbl.className = 'arrow-conn-label';
         lbl.textContent = connLabel;
-        arrow.appendChild(lbl);
+        arrowIconRow.appendChild(lbl);
       }
       const line = document.createElement('div');
       line.className = 'arrow-line';
-      arrow.appendChild(line);
+      arrowIconRow.appendChild(line);
+      arrow.appendChild(arrowIconRow);
       flow.appendChild(arrow);
     }
   });
@@ -316,7 +329,7 @@ function buildConnLabel(hop, nextHop) {
   // Show "egress→ingress" ports between two hops
   const from = hop.egress_port;
   const to   = nextHop.ingress_port;
-  if (from && to) return `${from} ↔ ${to}`;
+  if (from && to) return `${from} → ${to}`;
   if (from) return from;
   if (to)   return to;
   return '';
