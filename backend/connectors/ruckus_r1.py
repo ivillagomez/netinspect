@@ -44,50 +44,82 @@ class RuckusR1Client:
 
     async def _try_token_url(self, token_url: str, cfg) -> tuple:
         """
-        Attempt one token exchange URL. Returns (token_or_None, status_code, response_snippet).
-        Tries form-encoded body first (standard OAuth2), then JSON body as fallback.
+        POST to token_url for a client-credentials token, manually chasing any
+        HTTP redirects so the method stays POST (httpx converts POST→GET on 302
+        when follow_redirects=True, causing infinite redirect loops).
+
+        Tries three credential styles in order:
+          1. form body  — RFC 6749 §2.3.1 body params (most providers)
+          2. Basic Auth — creds in Authorization header (AWS Cognito style)
+          3. JSON body  — non-standard fallback
+
+        Returns (token_or_None, final_http_status, response_snippet).
         """
-        for content_type, post_kwargs in [
-            # Attempt 1: standard form-encoded (RFC 6749)
-            ("form", dict(data={
-                "grant_type":    "client_credentials",
-                "client_id":     cfg.client_id,
-                "client_secret": cfg.client_secret,
-            })),
-            # Attempt 2: JSON body (some non-standard providers)
-            ("json", dict(json={
-                "grant_type":    "client_credentials",
-                "client_id":     cfg.client_id,
-                "client_secret": cfg.client_secret,
-            })),
-        ]:
+        credential_styles = [
+            # Style 1: standard form-encoded body
+            ("form", {
+                "data": {
+                    "grant_type":    "client_credentials",
+                    "client_id":     cfg.client_id,
+                    "client_secret": cfg.client_secret,
+                }
+            }),
+            # Style 2: AWS Cognito — Basic Auth header, minimal body
+            ("basic+form", {
+                "data": {"grant_type": "client_credentials"},
+                "auth": (cfg.client_id, cfg.client_secret),
+            }),
+            # Style 3: JSON body
+            ("json", {
+                "json": {
+                    "grant_type":    "client_credentials",
+                    "client_id":     cfg.client_id,
+                    "client_secret": cfg.client_secret,
+                }
+            }),
+        ]
+
+        for style, post_kwargs in credential_styles:
+            url = token_url
             try:
-                async with httpx.AsyncClient(
-                    timeout=15.0, verify=True,
-                    follow_redirects=True,          # follow 302 → actual token endpoint
-                    headers={"Accept": "application/json"},
-                ) as c:
-                    r = await c.post(token_url, **post_kwargs)
-                final_url = str(r.url)
-                logger.info(
-                    "R1 token [%s]: HTTP %s  url=%s — %s",
-                    content_type, r.status_code, final_url, r.text[:200],
-                )
-                if r.is_success:
-                    data  = r.json()
-                    token = data.get("access_token")
-                    if token:
-                        expires_in = int(data.get("expires_in", 3600))
-                        self._token_expires_at = time.time() + expires_in - 60
-                        logger.info(
-                            "R1 token obtained (url=%s, expires_in=%ds)", final_url, expires_in
-                        )
-                        return token, r.status_code, r.text[:200]
-                return None, r.status_code, r.text[:200]
+                for _hop in range(6):   # allow up to 5 redirect hops
+                    async with httpx.AsyncClient(
+                        timeout=15.0,
+                        verify=True,
+                        follow_redirects=False,   # manual chase keeps POST method
+                        headers={"Accept": "application/json"},
+                    ) as c:
+                        r = await c.post(url, **post_kwargs)
+
+                    if r.status_code in (301, 302, 303, 307, 308):
+                        location = r.headers.get("location", "")
+                        logger.info("R1 token [%s]: HTTP %s %s → %s",
+                                    style, r.status_code, url, location)
+                        if not location:
+                            break
+                        url = location
+                        continue        # POST again to Location
+
+                    # Non-redirect response — evaluate
+                    logger.info("R1 token [%s]: HTTP %s url=%s — %s",
+                                style, r.status_code, url, r.text[:300])
+                    if r.is_success:
+                        data  = r.json()
+                        token = data.get("access_token")
+                        if token:
+                            expires_in = int(data.get("expires_in", 3600))
+                            self._token_expires_at = time.time() + expires_in - 60
+                            logger.info("R1 token obtained via %s (url=%s, expires_in=%ds)",
+                                        style, url, expires_in)
+                            return token, r.status_code, r.text[:200]
+                    # Non-success from a real endpoint — stop, report
+                    return None, r.status_code, r.text[:200]
+
             except Exception as e:
-                logger.warning("R1 token [%s %s] error: %s", content_type, token_url, e)
-                return None, 0, str(e)
-        return None, 0, "all attempts failed"
+                logger.warning("R1 token [%s %s] error: %s", style, token_url, e)
+                # Fall through to next credential style
+
+        return None, 0, "all credential styles failed"
 
     async def _fetch_token(self) -> Optional[str]:
         """
@@ -458,8 +490,31 @@ class RuckusR1Client:
             "auth_mode":   "oauth2_client_credentials" if cfg.client_id else "static_bearer",
         }
 
-        # Step 1: token exchange — probe each candidate URL directly
+        # Step 0: raw redirect probe — single no-follow POST to reveal Location header
         cfg = self.config
+        try:
+            async with httpx.AsyncClient(
+                timeout=10.0, verify=True,
+                follow_redirects=False,
+                headers={"Accept": "application/json"},
+            ) as c:
+                r0 = await c.post(
+                    f"{base}/oauth2/token",
+                    data={
+                        "grant_type":    "client_credentials",
+                        "client_id":     cfg.client_id,
+                        "client_secret": cfg.client_secret,
+                    },
+                )
+            result["oauth2_redirect_probe"] = {
+                "status":   r0.status_code,
+                "location": r0.headers.get("location"),
+                "snippet":  r0.text[:300],
+            }
+        except Exception as e:
+            result["oauth2_redirect_probe"] = {"error": str(e)}
+
+        # Step 1: token exchange — probe each candidate URL directly
         candidates = [
             f"{self.base_url}/oauth2/token",
             f"{self.base_url}/token",
