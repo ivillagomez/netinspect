@@ -353,18 +353,47 @@ class RuckusR1Client:
     # ------------------------------------------------------------------
 
     async def test_connection(self) -> Dict:
-        """Probe GET /venues and return raw HTTP result for the /api/r1/test endpoint."""
-        url = f"{self.base_url}/venues"
+        """
+        Probe the API with multiple auth strategies so we can pinpoint what's failing.
+        Tests GET /venues with three header variants, then a POST /venues/aps/query.
+        """
+        import httpx as _httpx
+        key   = self.config.api_key
+        base  = self.base_url
+        results = {}
+
+        strategies = [
+            ("bearer",   {"Authorization": f"Bearer {key}",  "Accept": "application/json"}),
+            ("x-api-key",{"X-API-Key": key,                  "Accept": "application/json"}),
+            ("vnd-bearer",{"Authorization": f"Bearer {key}", "Accept": "application/vnd.ruckus.v1+json",
+                           "Content-Type": "application/vnd.ruckus.v1+json"}),
+        ]
+        for name, hdrs in strategies:
+            try:
+                async with _httpx.AsyncClient(headers=hdrs, timeout=10.0, verify=True) as c:
+                    r = await c.get(f"{base}/venues")
+                    results[f"GET /venues [{name}]"] = {
+                        "status": r.status_code,
+                        "snippet": r.text[:300],
+                    }
+            except Exception as e:
+                results[f"GET /venues [{name}]"] = {"error": str(e)}
+
+        # Also try POST /venues/aps/query with the primary bearer strategy
         try:
-            r = await self._get_client().get(url)
-            return {
-                "url":              url,
-                "status_code":      r.status_code,
-                "ok":               r.is_success,
-                "response_snippet": r.text[:500],
-            }
+            async with _httpx.AsyncClient(
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                timeout=10.0, verify=True,
+            ) as c:
+                r = await c.post(f"{base}/venues/aps/query", json={"pageSize": 1})
+                results["POST /venues/aps/query [bearer]"] = {
+                    "status": r.status_code,
+                    "snippet": r.text[:300],
+                }
         except Exception as e:
-            return {"url": url, "error": str(e), "ok": False}
+            results["POST /venues/aps/query [bearer]"] = {"error": str(e)}
+
+        return {"base_url": base, "key_prefix": key[:8] + "…", "results": results}
 
     async def get_ap_uplink_info(self, ap_id: str) -> Optional[Dict]:
         """Stub kept for interface compatibility — not implemented in R1 v1 spec."""
