@@ -97,6 +97,16 @@ class RuckusR1Client:
                                     style, r.status_code, url, location)
                         if not location:
                             break
+                        # SSO / authorization-code initiation redirect — NOT a token endpoint.
+                        # (Spring Security pattern: /oauth2/authorization/{registrationId})
+                        # Bail out so _fetch_token tries the next candidate URL instead.
+                        if "/oauth2/authorization" in location or "/login" in location:
+                            logger.info(
+                                "R1 token [%s]: SSO redirect detected (%s) — "
+                                "this URL is not the token endpoint, skipping",
+                                style, location,
+                            )
+                            break
                         url = location
                         continue        # POST again to Location
 
@@ -130,9 +140,16 @@ class RuckusR1Client:
         if not cfg.client_id or not cfg.client_secret:
             return cfg.api_key  # legacy static JWT / api_key fallback
 
+        # Derive the auth-server base URL by stripping the "api." subdomain.
+        # api.asia.ruckus.cloud/oauth2/token → 302 to asia.ruckus.cloud/oauth2/authorization/idm
+        # The actual token endpoint lives on asia.ruckus.cloud, not api.asia.ruckus.cloud.
+        import re as _re
+        auth_base = _re.sub(r"^(https?://)api\.", r"\1", self.base_url)
+
         # Candidate token endpoint URLs (tried in order)
         candidates = [
-            f"{self.base_url}/oauth2/token",
+            f"{auth_base}/oauth2/token",         # https://asia.ruckus.cloud/oauth2/token  ← likely winner
+            f"{self.base_url}/oauth2/token",     # api.asia.ruckus.cloud (redirects to SSO — skipped)
             f"{self.base_url}/token",
             f"{self.base_url}/v1/oauth/token",
         ]
@@ -515,10 +532,13 @@ class RuckusR1Client:
             result["oauth2_redirect_probe"] = {"error": str(e)}
 
         # Step 1: token exchange — probe each candidate URL directly
+        import re as _re
+        auth_base = _re.sub(r"^(https?://)api\.", r"\1", base)
         candidates = [
-            f"{self.base_url}/oauth2/token",
-            f"{self.base_url}/token",
-            f"{self.base_url}/v1/oauth/token",
+            f"{auth_base}/oauth2/token",
+            f"{base}/oauth2/token",
+            f"{base}/token",
+            f"{base}/v1/oauth/token",
         ]
         token_probes = {}
         token = None
