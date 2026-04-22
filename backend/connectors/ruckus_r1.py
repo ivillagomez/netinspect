@@ -555,28 +555,14 @@ class RuckusR1Client:
         # legacy key
         result["oauth2_redirect_probe"] = probes[f"{base}/oauth2/token (POST)"]
 
-        # Step 1: token exchange — probe each candidate URL directly
-        candidates = [
-            f"{auth_base}/oauth2/token",
-            f"{base}/oauth2/token",
-            f"{base}/token",
-            f"{base}/v1/oauth/token",
-        ]
-        token_probes = {}
-        token = None
-        for url in candidates:
-            t, status, snippet = await self._try_token_url(url, cfg)
-            token_probes[url] = {"status": status, "snippet": snippet[:200]}
-            if t:
-                token = t
-                self._access_token = t
-                break
-        result["token_probes"]  = token_probes
+        # Step 1: token exchange — use the same _get_token() path as real API calls
+        # (includes the tenant-scoped URL as first candidate)
+        token = await self._get_token()
         result["token_obtained"] = bool(token)
         result["token_prefix"]   = token[:20] + "…" if token else None
 
         if not token:
-            result["error"] = "Token exchange failed on all candidate URLs — see token_probes"
+            result["error"] = "Token exchange failed — check probes above for the raw HTTP responses"
             return result
 
         hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
