@@ -25,7 +25,11 @@ class CiscoSwitchConfig(BaseModel):
 
 class RuckusR1Config(BaseModel):
     base_url: str
-    api_key: str
+    # OAuth2 client credentials (from portal: Administration → Settings → Application Tokens)
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    # Legacy: static Bearer token / direct JWT (used if client_id not set)
+    api_key: Optional[str] = None
 
 
 class ServerConfig(BaseModel):

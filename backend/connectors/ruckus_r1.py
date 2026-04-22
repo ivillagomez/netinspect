@@ -1,11 +1,14 @@
 """
 Ruckus One REST API connector.
 
-Auth:   Authorization: Bearer <api_key>
+Auth:   OAuth2 Client Credentials  →  Authorization: Bearer <JWT>
+        Client ID + Secret from portal: Administration → Settings → Application Tokens
+        Token exchange: POST {base_url}/oauth2/token  (form-encoded)
 Paths:  All paths start at /venues/...  (no /v1/ prefix)
 Docs:   RUCKUS_One_Consolidated_API_04212026.json
 """
 
+import time
 import httpx
 import logging
 import re
@@ -31,28 +34,83 @@ class RuckusR1Client:
         self.base_url = config.base_url.rstrip("/")
         self._client: Optional[httpx.AsyncClient] = None
         self._venue_id: Optional[str] = None   # cached after first venues call
+        # OAuth2 token cache
+        self._access_token: Optional[str] = None
+        self._token_expires_at: float = 0.0
 
     # ------------------------------------------------------------------
-    # HTTP helpers
+    # OAuth2 Client Credentials token exchange
     # ------------------------------------------------------------------
 
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                timeout=20.0,
-                verify=True,
-            )
-        return self._client
+    async def _fetch_token(self) -> Optional[str]:
+        """
+        Exchange client_id + client_secret for a JWT access token.
+        Ruckus One uses OAuth2 client_credentials grant.
+        Token endpoint: POST {base_url}/oauth2/token  (form-encoded body)
+        """
+        cfg = self.config
+        if not cfg.client_id or not cfg.client_secret:
+            # Fall back to static api_key as Bearer token (legacy / direct JWT)
+            return cfg.api_key
+
+        token_url = f"{self.base_url}/oauth2/token"
+        try:
+            async with httpx.AsyncClient(timeout=15.0, verify=True) as c:
+                r = await c.post(
+                    token_url,
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id":     cfg.client_id,
+                        "client_secret": cfg.client_secret,
+                    },
+                    headers={"Accept": "application/json"},
+                )
+                logger.info("R1 token exchange: HTTP %s from %s", r.status_code, token_url)
+                if not r.is_success:
+                    logger.error(
+                        "R1 token exchange failed: HTTP %s — %s", r.status_code, r.text[:300]
+                    )
+                    return None
+                data = r.json()
+                token = data.get("access_token")
+                expires_in = int(data.get("expires_in", 3600))
+                self._token_expires_at = time.time() + expires_in - 60  # 60 s buffer
+                logger.info(
+                    "R1 token obtained (expires_in=%ds, type=%s)",
+                    expires_in, data.get("token_type", "?"),
+                )
+                return token
+        except Exception as e:
+            logger.error("R1 token exchange error: %s", e)
+            return None
+
+    async def _get_token(self) -> Optional[str]:
+        """Return a valid access token, refreshing if expired."""
+        if self._access_token and time.time() < self._token_expires_at:
+            return self._access_token
+        self._access_token = await self._fetch_token()
+        return self._access_token
+
+    async def _auth_headers(self) -> Dict[str, str]:
+        token = await self._get_token()
+        if not token:
+            return {}
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    # ------------------------------------------------------------------
+    # HTTP helpers  (token fetched fresh per request group)
+    # ------------------------------------------------------------------
 
     async def _get(self, path: str, params: Dict = None) -> Any:
         url = f"{self.base_url}{path}"
+        hdrs = await self._auth_headers()
         try:
-            r = await self._get_client().get(url, params=params or {})
+            async with httpx.AsyncClient(headers=hdrs, timeout=20.0, verify=True) as c:
+                r = await c.get(url, params=params or {})
             if r.status_code == 401:
                 logger.error("R1: 401 Unauthorized on GET %s — %s", path, r.text[:200])
                 return None
@@ -66,8 +124,10 @@ class RuckusR1Client:
 
     async def _post(self, path: str, body: Dict = None) -> Any:
         url = f"{self.base_url}{path}"
+        hdrs = await self._auth_headers()
         try:
-            r = await self._get_client().post(url, json=body or {})
+            async with httpx.AsyncClient(headers=hdrs, timeout=20.0, verify=True) as c:
+                r = await c.post(url, json=body or {})
             if r.status_code == 401:
                 logger.error("R1: 401 Unauthorized on POST %s — %s", path, r.text[:200])
                 return None
@@ -354,46 +414,45 @@ class RuckusR1Client:
 
     async def test_connection(self) -> Dict:
         """
-        Probe the API with multiple auth strategies so we can pinpoint what's failing.
-        Tests GET /venues with three header variants, then a POST /venues/aps/query.
+        Test the OAuth2 token exchange then probe GET /venues and POST /venues/aps/query.
         """
-        import httpx as _httpx
-        key   = self.config.api_key
-        base  = self.base_url
-        results = {}
+        base   = self.base_url
+        cfg    = self.config
+        result: Dict = {
+            "base_url":    base,
+            "client_id":   (cfg.client_id or "")[:8] + "…" if cfg.client_id else None,
+            "auth_mode":   "oauth2_client_credentials" if cfg.client_id else "static_bearer",
+        }
 
-        strategies = [
-            ("bearer",   {"Authorization": f"Bearer {key}",  "Accept": "application/json"}),
-            ("x-api-key",{"X-API-Key": key,                  "Accept": "application/json"}),
-            ("vnd-bearer",{"Authorization": f"Bearer {key}", "Accept": "application/vnd.ruckus.v1+json",
-                           "Content-Type": "application/vnd.ruckus.v1+json"}),
-        ]
-        for name, hdrs in strategies:
-            try:
-                async with _httpx.AsyncClient(headers=hdrs, timeout=10.0, verify=True) as c:
-                    r = await c.get(f"{base}/venues")
-                    results[f"GET /venues [{name}]"] = {
-                        "status": r.status_code,
-                        "snippet": r.text[:300],
-                    }
-            except Exception as e:
-                results[f"GET /venues [{name}]"] = {"error": str(e)}
+        # Step 1: token exchange
+        self._access_token = None   # force fresh fetch
+        token = await self._get_token()
+        result["token_obtained"] = bool(token)
+        result["token_prefix"]   = token[:20] + "…" if token else None
 
-        # Also try POST /venues/aps/query with the primary bearer strategy
+        if not token:
+            result["error"] = "Token exchange failed — check client_id/client_secret and token endpoint"
+            return result
+
+        hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Step 2: GET /venues
         try:
-            async with _httpx.AsyncClient(
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                timeout=10.0, verify=True,
-            ) as c:
-                r = await c.post(f"{base}/venues/aps/query", json={"pageSize": 1})
-                results["POST /venues/aps/query [bearer]"] = {
-                    "status": r.status_code,
-                    "snippet": r.text[:300],
-                }
+            async with httpx.AsyncClient(headers=hdrs, timeout=10.0, verify=True) as c:
+                r = await c.get(f"{base}/venues")
+            result["GET /venues"] = {"status": r.status_code, "snippet": r.text[:400]}
         except Exception as e:
-            results["POST /venues/aps/query [bearer]"] = {"error": str(e)}
+            result["GET /venues"] = {"error": str(e)}
 
-        return {"base_url": base, "key_prefix": key[:8] + "…", "results": results}
+        # Step 3: POST /venues/aps/query
+        try:
+            async with httpx.AsyncClient(headers=hdrs, timeout=10.0, verify=True) as c:
+                r = await c.post(f"{base}/venues/aps/query", json={"pageSize": 1})
+            result["POST /venues/aps/query"] = {"status": r.status_code, "snippet": r.text[:400]}
+        except Exception as e:
+            result["POST /venues/aps/query"] = {"error": str(e)}
+
+        return result
 
     async def get_ap_uplink_info(self, ap_id: str) -> Optional[Dict]:
         """Stub kept for interface compatibility — not implemented in R1 v1 spec."""
