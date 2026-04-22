@@ -71,7 +71,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
             f"config.yaml not found. Searched: {candidates}\n"
             "Copy config.yaml to the project root and fill in your credentials."
         )
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     _config = AppConfig(**data)
     return _config
