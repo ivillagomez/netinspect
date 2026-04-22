@@ -641,6 +641,14 @@ class CiscoSwitch:
             return e
         return None
 
+    # Matches LLDP Port IDs that are MAC addresses (Ruckus ICX reports these
+    # with Port ID Subtype 3).  When matched we fall back to Port Description.
+    _MAC_PORT_RE = re.compile(
+        r'^([0-9a-f]{4}\.){2}[0-9a-f]{4}$'         # Cisco dot-notation  xxxx.xxxx.xxxx
+        r'|^([0-9a-f]{2}[:\-]){5}[0-9a-f]{2}$',    # colon/dash          xx:xx:xx:xx:xx:xx
+        re.IGNORECASE,
+    )
+
     def _parse_all_lldp(self, output: str) -> List[LLDPNeighbor]:
         entries = re.split(r"-{10,}", output)
         results = []
@@ -651,8 +659,24 @@ class CiscoSwitch:
             local_port = shorten_interface(local_m.group(1))
             name_m = re.search(r"System Name:\s*(.+)", block)
             remote_device = name_m.group(1).strip() if name_m else ""
+
+            # Port id is sometimes a MAC address on Ruckus ICX (LLDP Subtype 3).
+            # Port Description carries the real port name in that case.
             port_m = re.search(r"Port id:\s*(.+)", block)
-            remote_port = shorten_interface(port_m.group(1).strip()) if port_m else ""
+            raw_port_id = port_m.group(1).strip() if port_m else ""
+            port_desc_m = re.search(r"Port description:\s*(.+)", block, re.IGNORECASE)
+            port_desc = port_desc_m.group(1).strip() if port_desc_m else ""
+
+            if self._MAC_PORT_RE.match(raw_port_id) and port_desc:
+                # Port id is a MAC address — use Port Description instead
+                remote_port = shorten_interface(port_desc)
+                logger.debug("LLDP port-id is MAC (%s) — using Port Description: %s",
+                             raw_port_id, remote_port)
+            elif raw_port_id:
+                remote_port = shorten_interface(raw_port_id)
+            else:
+                remote_port = shorten_interface(port_desc)
+
             ip_m = re.search(r"(?:Management Addresses|IP):\s*\n?\s*(?:IP:\s*)?(\d+\.\d+\.\d+\.\d+)", block)
             remote_ip = ip_m.group(1) if ip_m else None
             # Match description on same line ("System Description: Ruckus R670 ...")

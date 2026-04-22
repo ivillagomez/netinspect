@@ -701,6 +701,20 @@ class NetworkTracer:
             name  = ap.get("name") or ap.get("apName") or f"AP-{ap_id}"
             ip    = ap.get("ip") or ap.get("ipAddress")
             model = ap.get("model") or ap.get("modelName") or ""
+
+            # Try to find the wired uplink port from R1 AP data.
+            # R1 One uses various field names depending on firmware version.
+            uplink_port = (
+                ap.get("uplinkPort")
+                or ap.get("connectedSwitchPort")
+                or ap.get("uplinkIfName")
+                or ap.get("wiredPort")
+                or ap.get("switchPort")
+                or ap.get("connectedPort")
+            )
+            if uplink_port:
+                uplink_port = str(uplink_port).strip() or None
+
             # Redact sensitive fields before storing in raw_data
             _REDACT = {"loginPassword", "password", "secret", "apiKey", "api_key"}
             safe_ap = {k: "***" if k in _REDACT else v for k, v in ap.items()}
@@ -711,6 +725,7 @@ class NetworkTracer:
                 device_ip=ip,
                 vendor="Ruckus",
                 model=model,
+                ingress_port=uplink_port,   # wired uplink port (if R1 provides it)
                 raw_data={"ap_id": ap_id, "r1_data": safe_ap},
             )
         except Exception as e:
