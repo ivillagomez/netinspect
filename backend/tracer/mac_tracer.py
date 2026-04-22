@@ -137,37 +137,36 @@ class NetworkTracer:
                         (getattr(n, "platform", "") or getattr(n, "system_description", ""))[:60],
                     ) for n in all_nbrs]
                 )
-                ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
-                if ap_hop:
-                    result.path.append(ap_hop)
+                if last_sw and last_sw.device_type != DeviceType.CISCO_SWITCH:
+                    # ── Non-Cisco switch (ICX) already in path from _walk_path ──
+                    # Don't add it again.  Check for a direct AP hop; if none,
+                    # the client is wireless through the Ruckus infrastructure.
+                    ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
+                    if ap_hop:
+                        result.path.append(ap_hop)
+                    logger.info(
+                        "[wireless] Client behind non-Cisco switch %r — treating as wireless",
+                        last_sw.device_name,
+                    )
                     result.path.append(self._end_hop_wireless(None, mac, resolution.ip, len(result.path)))
                 else:
-                    # If the edge switch's access port has a CDP/LLDP neighbor that
-                    # matches the last hop in the path (a non-Cisco intermediate switch,
-                    # e.g. a Ruckus ICX), the client is almost certainly wireless —
-                    # R1 is just unavailable so we can't confirm the AP.
-                    _ap_nbr_name = ""
-                    if access_port and all_nbrs:
-                        _ap_nbr = next(
-                            (n for n in all_nbrs
-                             if getattr(n, "local_port", "") == access_port),
-                            None,
-                        )
-                        _ap_nbr_name = getattr(_ap_nbr, "remote_device", "") if _ap_nbr else ""
-                    _behind_intermediate = (
-                        _ap_nbr_name
-                        and last_sw is not None
-                        and last_sw.device_name == _ap_nbr_name
-                        and last_sw.device_type != DeviceType.CISCO_SWITCH
-                    )
-                    if _behind_intermediate:
+                    # ── Last hop is a Cisco switch — try ICX then direct AP ──
+                    # _build_ruckus_sw_from_edge handles Po* access ports by
+                    # resolving physical member ports (CDP/LLDP lives on Gi, not Po).
+                    ruckus_sw_hop = await self._build_ruckus_sw_from_edge(edge, len(result.path))
+                    if ruckus_sw_hop:
                         logger.info(
-                            "[wireless] Client behind intermediate switch %r — treating as wireless",
-                            _ap_nbr_name,
+                            "[wireless] Ruckus ICX detected on access port — adding ICX hop",
                         )
+                        result.path.append(ruckus_sw_hop)
                         result.path.append(self._end_hop_wireless(None, mac, resolution.ip, len(result.path)))
                     else:
-                        result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
+                        ap_hop = await self._check_if_ap(last_sw, edge, cisco_results)
+                        if ap_hop:
+                            result.path.append(ap_hop)
+                            result.path.append(self._end_hop_wireless(None, mac, resolution.ip, len(result.path)))
+                        else:
+                            result.path.append(self._end_hop_wired(mac, resolution.ip, len(result.path)))
 
         elif r1_client_info and not isinstance(r1_client_info, Exception):
             # ── Wireless client found via R1 but no Cisco edge switch found ──
@@ -738,27 +737,72 @@ class NetworkTracer:
             raw_data={"mac": mac, "ssid": ssid, "rssi": rssi, "r1_data": r1_client or {}},
         )
 
+    def _resolve_access_neighbors(self, edge: Dict) -> List:
+        """
+        Return CDP/LLDP neighbors on the edge switch's access port (the port where
+        the end-device MAC was learned).
+
+        Port-channel (Po*) handling:
+          CDP/LLDP neighbors are advertised on the physical member ports (Gi1/0/22),
+          NOT on the virtual Po interface.  When the access port is a port-channel,
+          we look up its member ports from etherchannel_members and return neighbors
+          on those physical ports.
+
+        Falls back to per-port cdp_neighbor / lldp_neighbor if all_cdp/all_lldp
+        didn't capture the access port directly.
+        """
+        access_port = edge["mac_entry"].port if edge.get("mac_entry") else None
+        all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
+
+        # Direct match
+        if access_port:
+            nbrs = [n for n in all_nbrs if getattr(n, "local_port", "") == access_port]
+        else:
+            nbrs = list(all_nbrs)
+
+        # Port-channel: neighbors are on member physical ports, not on the Po interface
+        if not nbrs and access_port and access_port.upper().startswith("PO"):
+            members = {
+                m["port"] for m in edge.get("etherchannel_members", [])
+                if isinstance(m, dict) and m.get("port")
+            }
+            logger.info(
+                "[resolve_nbrs] access_port=%s is port-channel, members=%s", access_port, members
+            )
+            if members:
+                nbrs = [n for n in all_nbrs if getattr(n, "local_port", "") in members]
+
+        # Per-port fallback (neighbor_info diagnostic option)
+        if not nbrs:
+            nbrs = [n for n in [edge.get("cdp_neighbor"), edge.get("lldp_neighbor")] if n]
+
+        return nbrs
+
     async def _build_ruckus_sw_from_edge(self, edge: Dict, order: int) -> Optional[Hop]:
         """
         Inspect the device-facing port of the edge Cisco switch.
         If a Ruckus ICX switch is there (not an AP), build and return a hop for it.
         Used to surface the ICX in wireless paths: Cisco → ICX → AP → client.
+        Handles port-channel access ports by resolving physical member ports first.
         """
-        access_port = edge["mac_entry"].port if edge.get("mac_entry") else None
-        if not access_port:
+        if not edge.get("mac_entry"):
             return None
 
-        # all_cdp/all_lldp are always collected; filter to the access port
-        all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
-        logger.info(f"[ruckus_sw] access_port={access_port}, all neighbors: {[(getattr(n,'local_port',''),getattr(n,'remote_device',''),getattr(n,'platform','')[:40]) for n in all_nbrs]}")
-        access_nbr = next(
-            (n for n in all_nbrs if getattr(n, "local_port", "") == access_port),
-            None,
+        access_nbrs = self._resolve_access_neighbors(edge)
+        access_port = edge["mac_entry"].port
+        logger.info(
+            "[ruckus_sw] access_port=%s, resolved neighbors: %s",
+            access_port,
+            [(getattr(n, "local_port", ""), getattr(n, "remote_device", ""),
+              (getattr(n, "platform", "") or getattr(n, "system_description", ""))[:50])
+             for n in access_nbrs],
         )
-        # Fallback to per-port neighbor if available (requires neighbor_info option)
-        if not access_nbr:
-            access_nbr = edge.get("cdp_neighbor") or edge.get("lldp_neighbor")
-        logger.info(f"[ruckus_sw] access_nbr: device={getattr(access_nbr,'remote_device','None')} platform={getattr(access_nbr,'platform','')[:40]}")
+        access_nbr = access_nbrs[0] if access_nbrs else None
+        logger.info(
+            "[ruckus_sw] access_nbr: device=%r platform=%r",
+            getattr(access_nbr, "remote_device", "None"),
+            (getattr(access_nbr, "platform", "") or getattr(access_nbr, "system_description", ""))[:50],
+        )
         if not access_nbr:
             return None
 
@@ -797,18 +841,10 @@ class NetworkTracer:
         Check if the device-facing port on the edge switch connects directly to a Ruckus AP.
         Uses all_cdp/all_lldp (always collected) filtered to the access port, so this works
         regardless of whether the neighbor_info diagnostic option is enabled.
+        Handles port-channel access ports by resolving physical member ports.
         """
         access_port = edge["mac_entry"].port if edge.get("mac_entry") else None
-
-        # Build candidate neighbor list from always-collected all_cdp/all_lldp
-        all_nbrs = _dedup_neighbors(edge.get("all_cdp", []) + edge.get("all_lldp", []))
-        access_nbrs = (
-            [n for n in all_nbrs if getattr(n, "local_port", "") == access_port]
-            if access_port else all_nbrs
-        )
-        # Fall back to per-port entries if all_cdp/all_lldp didn't capture this port
-        if not access_nbrs:
-            access_nbrs = [n for n in [edge.get("cdp_neighbor"), edge.get("lldp_neighbor")] if n]
+        access_nbrs = self._resolve_access_neighbors(edge)
 
         for nbr in access_nbrs:
             combined = (
