@@ -124,6 +124,9 @@ if os.path.isdir(_frontend_dir):
 
     @app.get("/{full_path:path}")
     async def catch_all(full_path: str):
+        # Never intercept API routes — return 404 so FastAPI's own handler responds
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail="Not found")
         real_frontend = os.path.realpath(_frontend_dir)
         candidate = os.path.realpath(os.path.join(_frontend_dir, full_path))
         if os.path.isfile(candidate) and candidate.startswith(real_frontend + os.sep):
