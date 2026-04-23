@@ -121,21 +121,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function renderVendorBar() {
   const vendors = [
-    // On-prem
-    { label: 'Fortinet',          icon: '🔥', group: 'onprem' },
-    { label: 'Cisco IOS/IOS-XE',  icon: '🔌', group: 'onprem' },
-    { label: 'Aruba S / CX',      icon: '🔷', group: 'onprem' },
-    { label: 'Ruckus ICX',        icon: '📡', group: 'onprem' },
-    { label: 'Extreme Networks',  icon: '⚡', group: 'onprem' },
-    // Cloud
-    { label: 'Ruckus One',        icon: '☁️', group: 'cloud'  },
-    { label: 'Aruba Central',     icon: '☁️', group: 'cloud'  },
-    { label: 'ExtremeCloud IQ',   icon: '☁️', group: 'cloud'  },
+    { label: 'Fortinet',     group: 'onprem' },
+    { label: 'Cisco IOS',   group: 'onprem' },
+    { label: 'Aruba',       group: 'onprem' },
+    { label: 'Ruckus ICX',  group: 'onprem' },
+    { label: 'Extreme',     group: 'onprem' },
+    { label: 'Ruckus One',  group: 'cloud'  },
+    { label: 'Aruba Central', group: 'cloud' },
+    { label: 'XIQ',         group: 'cloud'  },
   ];
   const el = document.getElementById('deviceSummary');
   el.innerHTML = vendors.map(v =>
-    `<span class="vendor-chip vendor-chip--${v.group}">${v.icon} ${v.label}</span>`
+    `<span class="vendor-chip vendor-chip--${v.group}">${v.label}</span>`
   ).join('');
+}
+
+function mkBadge(text, type) {
+  const b = document.createElement('span');
+  b.className = `badge badge-${type}`;
+  b.textContent = text;
+  return b;
 }
 
 // ── Options panel ─────────────────────────────────────────────

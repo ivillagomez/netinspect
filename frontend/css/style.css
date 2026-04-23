@@ -94,30 +94,52 @@ body {
   width: 26px; height: 26px;
   color: var(--accent);
 }
-.header-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+.header-meta { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
 
 /* ── Vendor compatibility chips ─────────────────────────────── */
 .vendor-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
+  padding: 1px 7px;
   border-radius: 20px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   border: 1px solid;
+  white-space: nowrap;
 }
 .vendor-chip--onprem {
-  background: rgba(0,200,255,0.08);
-  border-color: rgba(0,200,255,0.25);
+  background: rgba(0,200,255,0.06);
+  border-color: rgba(0,200,255,0.2);
   color: var(--accent);
 }
 .vendor-chip--cloud {
-  background: rgba(124,92,252,0.08);
-  border-color: rgba(124,92,252,0.25);
+  background: rgba(124,92,252,0.06);
+  border-color: rgba(124,92,252,0.2);
   color: #a78bfa;
 }
+
+/* ── Footer ─────────────────────────────────────────────────── */
+.app-footer {
+  margin-top: 48px;
+  padding: 20px 0 28px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.app-footer a {
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+.app-footer a:hover { color: var(--accent); }
+.app-footer-left { display: flex; align-items: center; gap: 16px; }
+.app-footer-right { display: flex; align-items: center; gap: 6px; }
 
 /* ── Badges ─────────────────────────────────────────────────── */
 .badge {
