@@ -99,12 +99,25 @@ class NetworkTracer:
                 logger.info(f"[wireless] r1_client_info keys: {list(r1_client_info.keys())}")
                 logger.info(f"[wireless] r1_client_info: {r1_client_info}")
 
-                # Check for a Ruckus ICX switch sitting between the Cisco edge and the AP
-                ruckus_sw_hop = await self._build_ruckus_sw_from_edge(edge, len(result.path))
+                # Check for a Ruckus ICX switch sitting between the Cisco edge and the AP.
+                # Guard: if _walk_path already added a non-Cisco switch (ICX) as the last
+                # hop, don't add it again via _build_ruckus_sw_from_edge.
+                icx_already_in_path = (
+                    last_sw is not None
+                    and last_sw.device_type != DeviceType.CISCO_SWITCH
+                )
+                if icx_already_in_path:
+                    logger.info(
+                        "[wireless] ICX already in path from _walk_path (%s) — skipping duplicate",
+                        last_sw.device_name,
+                    )
+                    ruckus_sw_hop = None
+                else:
+                    ruckus_sw_hop = await self._build_ruckus_sw_from_edge(edge, len(result.path))
                 if ruckus_sw_hop:
                     logger.info(f"[wireless] Ruckus ICX hop built: {ruckus_sw_hop.device_name}")
                     result.path.append(ruckus_sw_hop)
-                else:
+                elif not icx_already_in_path:
                     logger.info("[wireless] No Ruckus ICX switch detected on access port")
 
                 ap_id = (
