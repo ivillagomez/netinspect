@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import os
 from fastapi import FastAPI, HTTPException, Depends, Security, Request
@@ -63,11 +64,15 @@ def get_tracer() -> NetworkTracer:
 
 
 async def verify_api_key(key: str = Security(_api_key_header)):
-    """If server.api_key is configured, require it via X-API-Key header."""
+    """If server.api_key is configured, require it via X-API-Key header.
+    Uses hmac.compare_digest() for constant-time comparison to prevent timing attacks.
+    """
     cfg = load_config()
     if not cfg.server.api_key:
         return  # auth disabled — open access
-    if key != cfg.server.api_key:
+    # key may be None if header is absent; treat as empty string for safe comparison
+    provided = key or ""
+    if not hmac.compare_digest(provided, cfg.server.api_key):
         raise HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
