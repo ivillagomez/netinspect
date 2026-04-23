@@ -237,8 +237,8 @@ cd netinspect
 :: 2. Install dependencies
 pip install -r requirements.txt
 
-:: 3. Create your local config (never commit this file)
-copy config.yaml config.yaml
+:: 3. Create your local config from the example template (never commit config.yaml)
+copy config.yaml.example config.yaml
 :: Edit config.yaml with Notepad++ or VS Code — fill in your credentials
 
 :: 4. Run the server
@@ -268,10 +268,10 @@ Find your IP with `ipconfig` in CMD.
 cd /mnt/user/appdata
 git clone https://github.com/ivillagomez/netinspect.git
 
-# 3. Create and edit your local config
+# 3. Create and edit your local config from the example template
 cd netinspect
-cp config.yaml config.local.yaml   # optional: keep a backup
-nano config.yaml                   # fill in your real credentials
+cp config.yaml.example config.yaml   # start from the template
+nano config.yaml                     # fill in your real credentials
 # Ctrl+O → Enter → Ctrl+X to save
 
 # 4. Build the Docker image (~2 min first time)
@@ -322,6 +322,7 @@ curl -fsSL https://get.docker.com | sh
 # 2. Clone + configure
 git clone https://github.com/ivillagomez/netinspect.git
 cd netinspect
+cp config.yaml.example config.yaml
 nano config.yaml    # fill in credentials
 
 # 3. Build and run
@@ -341,6 +342,7 @@ docker run -d \
 ```bash
 git clone https://github.com/ivillagomez/netinspect.git
 cd netinspect
+cp config.yaml.example config.yaml
 nano config.yaml         # fill in credentials
 
 docker compose up -d --build     # start
@@ -352,7 +354,7 @@ docker compose down              # stop
 ## 7. Configuration Reference
 
 `config.yaml` lives in the project root and is **excluded from git** (see [Section 11](#11-security-notes)).  
-Copy the template below and fill in your values.
+Copy `config.yaml.example` (included in the repo) to `config.yaml` and fill in your values.
 
 ```yaml
 # ── FortiGate ─────────────────────────────────────────────────

@@ -1,0 +1,50 @@
+# NetInspect — configuration template
+# Copy this file to config.yaml and fill in your values.
+# config.yaml is excluded from git (.gitignore) — never commit real credentials.
+
+# ── FortiGate ─────────────────────────────────────────────────
+fortigate:
+  host: "192.168.1.1"                  # FortiGate management IP
+  port: 443                            # HTTPS port (default: 443)
+  access_token: "YOUR_API_TOKEN"       # REST API access token
+  verify_ssl: false                    # Set true if using a trusted TLS cert
+  ssh_username: "YOUR_SSH_USERNAME"    # SSH admin user (for egress port stats)
+  ssh_password: "YOUR_SSH_PASSWORD"    # SSH admin password
+  ssh_port: 22                         # SSH port (default: 22)
+
+# ── Cisco Switches ─────────────────────────────────────────────
+cisco_switches:
+  - name: "SW-Core"                    # Friendly name shown in the UI
+    host: "192.168.1.2"                # Management IP
+    username: "YOUR_SSH_USERNAME"
+    password: "YOUR_SSH_PASSWORD"
+    device_type: "cisco_ios"           # cisco_ios | cisco_ios_xe | cisco_nxos
+    timeout: 30                        # SSH timeout in seconds
+    # Optional SNMP fast path — enables concurrent MAC + interface stats via SNMP
+    # snmp_community: "public"         # SNMP v2c community string (omit to disable)
+    # snmp_port: 161                   # Default: 161
+    # snmp_version: "2c"              # "1" or "2c"
+
+  - name: "SW-Access"
+    host: "192.168.1.3"
+    username: "YOUR_SSH_USERNAME"
+    password: "YOUR_SSH_PASSWORD"
+    device_type: "cisco_ios"
+    timeout: 30
+
+  # Add as many switches as needed (copy the block above)
+
+# ── Ruckus One (R1) ────────────────────────────────────────────
+ruckus_r1:
+  base_url: "https://api.asia.ruckus.cloud"   # Region: api.asia | api.eu | api (NA)
+  # OAuth2 client credentials — from portal: Administration → Settings → Application Tokens
+  client_id: "YOUR_CLIENT_ID"
+  client_secret: "YOUR_CLIENT_SECRET"
+  # Tenant ID — visible in the portal URL after login: asia.ruckus.cloud/<tenantId>/...
+  tenant_id: "YOUR_TENANT_ID"
+
+# ── Web Server ─────────────────────────────────────────────────
+server:
+  host: "0.0.0.0"                      # 0.0.0.0 = all interfaces
+  port: 8080
+  # api_key: "changeme"               # Uncomment to require X-API-Key header on all requests
