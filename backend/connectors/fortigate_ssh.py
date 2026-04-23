@@ -98,33 +98,43 @@ class FortiGateSSH:
         """
         diagnose netlink interface list <iface>
         Returns RX/TX packet+byte+error+drop counters and MTU.
+
+        FortiOS uses abbreviated field names (rxpkt/txpkt/rxbyt/txbyt/rxerr/txerr/rxdrp/txdrp)
+        but some versions use the full form (rxpackets etc.).  Parse each field individually
+        so the code is resilient to either format.
         """
         if not re.match(r'^[\w\-./]+$', interface):
             logger.warning("Skipping interface stats: invalid interface name")
             return {}
         try:
             out = self._cmd(f"diagnose netlink interface list {interface}")
-            stats = {}
-            # stat line: rxpackets=N txpackets=N rxbytes=N txbytes=N rxerrors=N txerrors=N rxdrops=N txdrops=N
-            m = re.search(
-                r"rxpackets=(\d+)\s+txpackets=(\d+)\s+rxbytes=(\d+)\s+txbytes=(\d+)"
-                r"\s+rxerrors=(\d+)\s+txerrors=(\d+)\s+rxdrops=(\d+)\s+txdrops=(\d+)",
-                out,
-            )
-            if m:
-                stats = {
-                    "rx_packets": int(m.group(1)),
-                    "tx_packets": int(m.group(2)),
-                    "rx_bytes":   int(m.group(3)),
-                    "tx_bytes":   int(m.group(4)),
-                    "rx_errors":  int(m.group(5)),
-                    "tx_errors":  int(m.group(6)),
-                    "rx_drops":   int(m.group(7)),
-                    "tx_drops":   int(m.group(8)),
-                }
-            m = re.search(r"mtu=(\d+)", out)
+            logger.debug("[FG SSH] interface list output for %s:\n%s", interface, out[:600])
+
+            def _pstat(key_re: str) -> int:
+                m = re.search(key_re + r'=(\d+)', out, re.IGNORECASE)
+                return int(m.group(1)) if m else 0
+
+            stats = {
+                # FortiOS 7.x abbreviated:  rxpkt / txpkt
+                # Older / full form:        rxpackets / txpackets
+                "rx_packets": _pstat(r"rxpkt(?:s|ets?)?"),
+                "tx_packets": _pstat(r"txpkt(?:s|ets?)?"),
+                "rx_bytes":   _pstat(r"rxbyt(?:es?)?"),
+                "tx_bytes":   _pstat(r"txbyt(?:es?)?"),
+                "rx_errors":  _pstat(r"rxerr(?:ors?)?"),
+                "tx_errors":  _pstat(r"txerr(?:ors?)?"),
+                "rx_drops":   _pstat(r"rxdrp(?:s)?|rxdrop(?:s)?"),
+                "tx_drops":   _pstat(r"txdrp(?:s)?|txdrop(?:s)?"),
+            }
+
+            m = re.search(r"mtu=(\d+)", out, re.IGNORECASE)
             if m:
                 stats["mtu"] = int(m.group(1))
+
+            # Return empty dict only if nothing was parsed (SSH ran but output was unrecognised)
+            if all(v == 0 for k, v in stats.items() if k != "mtu"):
+                logger.debug("[FG SSH] interface stats: no counters parsed from output")
+                return {}
             return stats
         except Exception as e:
             logger.debug(f"FortiGate SSH interface_stats error: {e}")

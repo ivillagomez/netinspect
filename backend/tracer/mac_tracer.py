@@ -785,15 +785,29 @@ class NetworkTracer:
     async def _build_ap_hop(self, ap_id: str, order: int) -> Optional[Hop]:
         try:
             ap = await self.r1.get_ap_by_id(ap_id)
-            logger.info(f"[ap_hop] get_ap_by_id({ap_id!r}) → {ap}")
+            logger.info(f"[ap_hop] get_ap_by_id({ap_id!r}) → keys={list(ap.keys()) if ap else None}")
             if not ap:
                 return None
             name  = ap.get("name") or ap.get("apName") or f"AP-{ap_id}"
-            ip    = ap.get("ip") or ap.get("ipAddress")
+            ip    = (
+                ap.get("ip")
+                or ap.get("ipAddress")
+                or ap.get("managementIp")
+                or ap.get("lanIp")
+                or ap.get("wiredIp")
+            )
             model = ap.get("model") or ap.get("modelName") or ""
+            version = (
+                ap.get("firmware")
+                or ap.get("firmwareVersion")
+                or ap.get("swVersion")
+                or ap.get("version")
+                or ap.get("softwareVersion")
+                or ""
+            )
 
             # Try to find the wired uplink port from R1 AP data.
-            # R1 One uses various field names depending on firmware version.
+            # R1 uses various field names depending on firmware version.
             uplink_port = (
                 ap.get("uplinkPort")
                 or ap.get("connectedSwitchPort")
@@ -805,6 +819,11 @@ class NetworkTracer:
             if uplink_port:
                 uplink_port = str(uplink_port).strip() or None
 
+            # Ruckus APs all have exactly one wired port named ETH0 — use it
+            # as a fallback when R1 doesn't return an explicit port field.
+            if not uplink_port:
+                uplink_port = "ETH0"
+
             # Redact sensitive fields before storing in raw_data
             _REDACT = {"loginPassword", "password", "secret", "apiKey", "api_key"}
             safe_ap = {k: "***" if k in _REDACT else v for k, v in ap.items()}
@@ -815,7 +834,8 @@ class NetworkTracer:
                 device_ip=ip,
                 vendor="Ruckus",
                 model=model,
-                ingress_port=uplink_port,   # wired uplink port (if R1 provides it)
+                software_version=version,
+                ingress_port=uplink_port,
                 raw_data={"ap_id": ap_id, "r1_data": safe_ap},
             )
         except Exception as e:
@@ -1026,10 +1046,11 @@ class NetworkTracer:
             logger.info(f"[check_if_ap] R1 unavailable — building AP hop from LLDP: name={name!r} model={model!r} ip={nbr_ip!r}")
 
             # AP's own LLDP port ID — Ruckus often uses dot-notation MAC (0033.5835.fbf0)
-            # as port ID; filter those out since they're meaningless as a port label.
+            # as port ID (LLDP subtype 3).  Replace with "ETH0" since all Ruckus APs
+            # have exactly one wired port by that name.
             ap_own_port = getattr(nbr, "remote_port", "") or ""
             if re.match(r'^[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}$', ap_own_port, re.IGNORECASE):
-                ap_own_port = ""
+                ap_own_port = "ETH0"
 
             # Forward the connecting switch port's interface data so the UI can show
             # link status, error counters, and PoE without SSH access to the AP itself.
