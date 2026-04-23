@@ -45,10 +45,36 @@ class ServerConfig(BaseModel):
     api_key: Optional[str] = None
 
 
+class ArubaSwitchConfig(BaseModel):
+    name: str
+    host: str
+    username: str
+    password: str
+    os_type: str = "aruba_os"   # "aruba_os" (2930/2930F/2930M) | "aruba_osix" (6000/6100)
+    timeout: int = 30
+
+
+class ArubaCentralConfig(BaseModel):
+    base_url: str = "https://apigw-prod2.central.arubanetworks.com"
+    client_id: str
+    client_secret: str
+    customer_id: str             # tenant ID — required for token scope
+
+
+class ExtremeIQConfig(BaseModel):
+    base_url: str = "https://extremecloudiq.com"
+    api_key: Optional[str] = None        # static API key via X-Auth-Token header
+    client_id: Optional[str] = None      # OAuth2 alternative
+    client_secret: Optional[str] = None  # OAuth2 alternative
+
+
 class AppConfig(BaseModel):
     fortigate: FortiGateConfig
     cisco_switches: List[CiscoSwitchConfig]
     ruckus_r1: RuckusR1Config
+    aruba_switches: List[ArubaSwitchConfig] = []
+    aruba_central: Optional[ArubaCentralConfig] = None
+    extreme_iq: Optional[ExtremeIQConfig] = None
     server: ServerConfig = ServerConfig()
 
 

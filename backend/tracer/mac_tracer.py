@@ -9,6 +9,9 @@ from backend.connectors.fortigate import FortiGateClient, normalize_mac
 from backend.connectors.fortigate_ssh import FortiGateSSH
 from backend.connectors.cisco_ssh import CiscoSwitch
 from backend.connectors.ruckus_r1 import RuckusR1Client
+from backend.connectors.aruba_ssh import ArubaSwitch
+from backend.connectors.aruba_central import ArubaCentralClient
+from backend.connectors.extreme_iq import ExtremeIQClient
 from backend.models import (
     Hop, DeviceType, Issue, IssueSeverity, TraceResult,
     DiagnosticOptions, TestResult, TestStatus,
@@ -24,8 +27,11 @@ class NetworkTracer:
         self.config = config
         self.fg = FortiGateClient(config.fortigate)
         self.fg_ssh = FortiGateSSH(config.fortigate)
-        self.cisco_switches = [CiscoSwitch(sw) for sw in config.cisco_switches]
-        self.r1 = RuckusR1Client(config.ruckus_r1)
+        self.cisco_switches  = [CiscoSwitch(sw) for sw in config.cisco_switches]
+        self.aruba_switches  = [ArubaSwitch(sw) for sw in config.aruba_switches]
+        self.r1              = RuckusR1Client(config.ruckus_r1)
+        self.aruba_central   = ArubaCentralClient(config.aruba_central) if config.aruba_central else None
+        self.extreme_iq      = ExtremeIQClient(config.extreme_iq) if config.extreme_iq else None
 
     async def trace(self, query: str, options: DiagnosticOptions = None) -> TraceResult:
         if options is None:
@@ -63,33 +69,43 @@ class NetworkTracer:
         fg_hop = await self._build_fg_hop(mac, resolution.ip)
         result.path.append(fg_hop)
 
-        # Step 3 — Query all Cisco switches in parallel
-        cisco_tasks = [sw.gather_all(norm_mac, options) for sw in self.cisco_switches]
-        cisco_results = await asyncio.gather(*cisco_tasks, return_exceptions=True)
-        cisco_results = [r for r in cisco_results if isinstance(r, dict)]
+        # Step 3 — Query all switches (Cisco + Aruba) in parallel
+        all_sw_tasks = (
+            [sw.gather_all(norm_mac, options) for sw in self.cisco_switches]
+            + [sw.gather_all(norm_mac, options) for sw in self.aruba_switches]
+        )
+        all_sw_results = await asyncio.gather(*all_sw_tasks, return_exceptions=True)
+        all_sw_results  = [r for r in all_sw_results if isinstance(r, dict)]
+        cisco_results   = [r for r in all_sw_results if r.get("vendor") != "aruba"]
+        aruba_results   = [r for r in all_sw_results if r.get("vendor") == "aruba"]
 
-        # Step 4 — R1: wireless client + R1-managed switch (parallel)
-        r1_client_info = None
-        r1_switch_info = None
+        # Step 4 — Cloud APIs: R1, Aruba Central, ExtremeCloud IQ (parallel)
+        r1_client_info  = None
+        r1_switch_info  = None
+        ac_wired        = None
+        ac_wireless     = None
+        xiq_client      = None
         try:
-            r1_client_info, r1_switch_info = await asyncio.gather(
+            cloud_coros = [
                 self.r1.find_client_by_mac(norm_mac),
                 self.r1.find_switch_port_for_mac(norm_mac),
-                return_exceptions=True,
-            )
-            if isinstance(r1_client_info, Exception):
-                r1_client_info = None
-            if isinstance(r1_switch_info, Exception):
-                r1_switch_info = None
+                self.aruba_central.find_wired_client(norm_mac)    if self.aruba_central else asyncio.sleep(0),
+                self.aruba_central.find_wireless_client(norm_mac) if self.aruba_central else asyncio.sleep(0),
+                self.extreme_iq.find_client(norm_mac)             if self.extreme_iq    else asyncio.sleep(0),
+            ]
+            cloud_results = await asyncio.gather(*cloud_coros, return_exceptions=True)
+            def _safe(v):
+                return v if not isinstance(v, Exception) else None
+            r1_client_info, r1_switch_info, ac_wired, ac_wireless, xiq_client = map(_safe, cloud_results)
         except Exception as e:
-            logger.warning(f"R1 lookup failed: {e}")
+            logger.warning("Cloud lookup failed: %s", type(e).__name__)
 
-        # Step 5 — Find edge switch (MAC on access port)
-        edge = self._find_edge(cisco_results)
+        # Step 5 — Find edge switch (Cisco or Aruba — whichever has the MAC on an access port)
+        edge = self._find_edge(all_sw_results)
 
         if edge:
             # ── Chain-walk from edge switch toward FortiGate ──
-            switch_hops = await self._walk_path(edge, cisco_results, options)
+            switch_hops = await self._walk_path(edge, all_sw_results, options)
             result.path.extend(switch_hops)
 
             last_sw = switch_hops[-1] if switch_hops else None
@@ -232,7 +248,7 @@ class NetworkTracer:
     async def _walk_path(
         self,
         edge: Dict,
-        all_cisco: List[Dict],
+        all_switches: List[Dict],
         options: DiagnosticOptions,
     ) -> List[Hop]:
         """
@@ -294,19 +310,19 @@ class NetworkTracer:
             if neighbor_ip == fg_ip or "forti" in neighbor_name.lower():
                 break
 
-            # Known Cisco switch?
-            next_cisco = (
-                self._result_by_hostname(neighbor_name, all_cisco)
-                or self._result_by_ip(neighbor_ip, all_cisco)
+            # Known switch (Cisco or Aruba)?
+            next_sw = (
+                self._result_by_hostname(neighbor_name, all_switches)
+                or self._result_by_ip(neighbor_ip, all_switches)
             )
-            if next_cisco:
+            if next_sw:
                 coming_from_port = getattr(uplink, "remote_port", None)
-                current = next_cisco
+                current = next_sw
                 continue
 
             # ── Unknown intermediate device (Ruckus switch, etc.) ──
-            # Find which other Cisco switch has this device as its CDP/LLDP peer.
-            beyond = self._cisco_beyond(neighbor_name, neighbor_ip, sw_name, all_cisco)
+            # Find which other known switch has this device as its CDP/LLDP peer.
+            beyond = self._cisco_beyond(neighbor_name, neighbor_ip, sw_name, all_switches)
 
             # Determine the intermediate device's egress port (toward beyond switch)
             inter_egress: Optional[str] = None
@@ -413,21 +429,35 @@ class NetworkTracer:
                 hop.order = order
                 result_hops.append(hop)
             else:
-                hop = self._build_cisco_hop(
-                    raw=entry["raw"],
-                    order=order,
-                    is_edge=entry["is_edge"],
-                    access_port=entry["access_port"],
-                    ingress_port=entry["ingress_port"],
-                    egress_port=entry["egress_port"],
-                )
+                raw = entry["raw"]
+                if raw.get("vendor") == "aruba":
+                    hop = self._build_aruba_hop(
+                        raw=raw,
+                        order=order,
+                        is_edge=entry["is_edge"],
+                        access_port=entry["access_port"],
+                        ingress_port=entry["ingress_port"],
+                        egress_port=entry["egress_port"],
+                    )
+                else:
+                    hop = self._build_cisco_hop(
+                        raw=raw,
+                        order=order,
+                        is_edge=entry["is_edge"],
+                        access_port=entry["access_port"],
+                        ingress_port=entry["ingress_port"],
+                        egress_port=entry["egress_port"],
+                    )
                 result_hops.append(hop)
 
         return result_hops
 
     def _pick_uplink(self, neighbors: List, fg_ip: str, visited: set) -> Optional[Any]:
         """Return the best uplink neighbor candidate (toward FortiGate)."""
-        known_ips = {sw.host for sw in self.cisco_switches}
+        known_ips = (
+            {sw.host for sw in self.cisco_switches}
+            | {sw.host for sw in self.aruba_switches}
+        )
 
         # Priority 1 — FortiGate
         for n in neighbors:
@@ -462,10 +492,10 @@ class NetworkTracer:
         device_name: str,
         device_ip: Optional[str],
         exclude_sw: str,
-        all_cisco: List[Dict],
+        all_switches: List[Dict],
     ) -> Optional[Dict]:
-        """Find a Cisco switch (other than exclude_sw) that has device_name as CDP/LLDP neighbor."""
-        for raw in all_cisco:
+        """Find a known switch (other than exclude_sw) that has device_name as CDP/LLDP neighbor."""
+        for raw in all_switches:
             sw = raw.get("hostname") or raw.get("switch", "")
             if sw == exclude_sw or not raw.get("reachable"):
                 continue
@@ -475,21 +505,21 @@ class NetworkTracer:
                     return raw
         return None
 
-    def _result_by_hostname(self, name: str, cisco_results: List[Dict]) -> Optional[Dict]:
-        for raw in cisco_results:
+    def _result_by_hostname(self, name: str, switch_results: List[Dict]) -> Optional[Dict]:
+        for raw in switch_results:
             if raw.get("hostname") == name or raw.get("switch") == name:
                 return raw
         return None
 
-    def _result_by_ip(self, ip: Optional[str], cisco_results: List[Dict]) -> Optional[Dict]:
+    def _result_by_ip(self, ip: Optional[str], switch_results: List[Dict]) -> Optional[Dict]:
         if not ip:
             return None
-        for raw in cisco_results:
+        for raw in switch_results:
             if raw.get("host") == ip:
                 return raw
         return None
 
-    def _find_edge(self, cisco_results: List[Dict]) -> Optional[Dict]:
+    def _find_edge(self, all_switch_results: List[Dict]) -> Optional[Dict]:
         """Return the switch most likely to be directly connected to the end device.
 
         Priority tiers (highest → lowest):
@@ -500,7 +530,7 @@ class NetworkTracer:
         """
         candidates = [
             (raw, raw["mac_entry"].port if raw.get("mac_entry") else "")
-            for raw in cisco_results if raw.get("mac_entry")
+            for raw in all_switch_results if raw.get("mac_entry")
         ]
         logger.info(
             "[find_edge] candidates: %s",
@@ -630,6 +660,7 @@ class NetworkTracer:
             stp_info=raw.get("stp_info"),
             poe_status=raw.get("poe_status"),
             reachable=raw.get("reachable", False),
+            system_logs=raw.get("system_logs", []),
             raw_data={
                 "version": ver,
                 "is_trunk": raw.get("is_trunk", False),
@@ -637,11 +668,57 @@ class NetworkTracer:
                 "etherchannel_members": raw.get("etherchannel_members", []),
                 "uplink_details": raw.get("uplink_details", {}),
                 "system_mtu": raw.get("system_mtu", {}),
-                # SNMP supplemental data (present only when snmp_community is configured)
                 "snmp_source": raw.get("snmp_source", False),
                 "snmp_system": raw.get("snmp_system"),
                 "snmp_mac": raw.get("snmp_mac"),
                 "snmp_int_stats": raw.get("snmp_int_stats"),
+            },
+        )
+
+    def _build_aruba_hop(
+        self,
+        raw: Dict,
+        order: int,
+        is_edge: bool,
+        access_port: Optional[str],
+        ingress_port: Optional[str],
+        egress_port: Optional[str],
+    ) -> Hop:
+        hostname = raw.get("hostname") or raw.get("switch", "Unknown Aruba Switch")
+        host_ip  = raw.get("host", "")
+        os_type  = raw.get("os_type", "aruba_os")
+        model    = "ArubaOS-CX" if os_type == "aruba_osix" else "ArubaOS-S"
+
+        mac_entry = raw.get("mac_entry")
+        vlan      = mac_entry.vlan if (is_edge and mac_entry) else None
+        if is_edge and access_port:
+            ingress_port = access_port
+
+        lldp_neighbors = raw.get("all_lldp", [])
+        lldp_n = next(
+            (n for n in lldp_neighbors if n.local_port == ingress_port),
+            None
+        ) if is_edge and ingress_port else None
+
+        return Hop(
+            order=order,
+            device_type=DeviceType.ARUBA_SWITCH,
+            device_name=hostname,
+            device_ip=host_ip,
+            vendor="Aruba",
+            model=model,
+            ingress_port=ingress_port,
+            egress_port=egress_port,
+            vlan=vlan,
+            interface_status=raw.get("int_status"),
+            interface_details=raw.get("int_details"),
+            lldp_neighbor=lldp_n,
+            reachable=raw.get("reachable", False),
+            system_logs=raw.get("system_logs", []),
+            raw_data={
+                "os_type":  os_type,
+                "is_trunk": raw.get("is_trunk", False),
+                "error":    raw.get("error"),
             },
         )
 

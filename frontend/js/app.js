@@ -39,6 +39,33 @@ const ICONS = {
     <line x1="8" y1="21" x2="16" y2="21"/>
     <line x1="12" y1="17" x2="12" y2="21"/>
   </svg>`,
+  aruba_switch: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="5" width="20" height="7" rx="1"/>
+    <rect x="2" y="14" width="20" height="5" rx="1"/>
+    <circle cx="6" cy="8.5" r="1" fill="currentColor"/>
+    <circle cx="9" cy="8.5" r="1" fill="currentColor"/>
+    <line x1="13" y1="8.5" x2="18" y2="8.5"/>
+  </svg>`,
+  aruba_ap: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+    <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+    <circle cx="12" cy="20" r="1" fill="currentColor"/>
+    <line x1="12" y1="3" x2="12" y2="7"/>
+  </svg>`,
+  extreme_switch: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="6" width="20" height="12" rx="2"/>
+    <path d="M7 10l2 2-2 2"/>
+    <line x1="12" y1="10" x2="17" y2="10"/>
+    <line x1="12" y1="14" x2="17" y2="14"/>
+  </svg>`,
+  extreme_ap: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+    <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+    <circle cx="12" cy="20" r="1" fill="currentColor"/>
+    <path d="M10 4l2-2 2 2"/>
+  </svg>`,
   unknown: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="10"/>
     <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
@@ -48,13 +75,17 @@ const ICONS = {
 
 // ── Constants ─────────────────────────────────────────────────
 const DEVICE_META = {
-  firewall:         { icon: ICONS.firewall,        label: 'Firewall',      cls: 'fw'       },
-  cisco_switch:     { icon: ICONS.cisco_switch,    label: 'Cisco Switch',  cls: 'cisco_sw' },
-  ruckus_switch:    { icon: ICONS.ruckus_switch,   label: 'Ruckus Switch', cls: 'r1_sw'    },
-  ruckus_ap:        { icon: ICONS.ruckus_ap,       label: 'Access Point',  cls: 'ap'       },
-  wireless_client:  { icon: ICONS.wireless_client, label: 'WiFi Client',   cls: 'client'   },
-  wired_client:     { icon: ICONS.wired_client,    label: 'Wired Device',  cls: 'client'   },
-  unknown:          { icon: ICONS.unknown,         label: 'Unknown',       cls: 'unknown'  },
+  firewall:         { icon: ICONS.firewall,        label: 'Firewall',        cls: 'fw'       },
+  cisco_switch:     { icon: ICONS.cisco_switch,    label: 'Cisco Switch',    cls: 'cisco_sw' },
+  ruckus_switch:    { icon: ICONS.ruckus_switch,   label: 'Ruckus Switch',   cls: 'r1_sw'    },
+  ruckus_ap:        { icon: ICONS.ruckus_ap,       label: 'Access Point',    cls: 'ap'       },
+  aruba_switch:     { icon: ICONS.aruba_switch,    label: 'Aruba Switch',    cls: 'aruba_sw' },
+  aruba_ap:         { icon: ICONS.aruba_ap,        label: 'Aruba AP',        cls: 'ap'       },
+  extreme_switch:   { icon: ICONS.extreme_switch,  label: 'Extreme Switch',  cls: 'ext_sw'   },
+  extreme_ap:       { icon: ICONS.extreme_ap,      label: 'Extreme AP',      cls: 'ap'       },
+  wireless_client:  { icon: ICONS.wireless_client, label: 'WiFi Client',     cls: 'client'   },
+  wired_client:     { icon: ICONS.wired_client,    label: 'Wired Device',    cls: 'client'   },
+  unknown:          { icon: ICONS.unknown,         label: 'Unknown',         cls: 'unknown'  },
 };
 
 // ── API key ───────────────────────────────────────────────────
@@ -82,33 +113,29 @@ async function apiFetch(url, opts = {}) {
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  loadDeviceSummary();
+  renderVendorBar();
   document.getElementById('searchInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') doTrace();
   });
 });
 
-async function loadDeviceSummary() {
-  try {
-    const res = await apiFetch('/api/devices');
-    const data = await res.json();
-    const el = document.getElementById('deviceSummary');
-    el.innerHTML = '';
-    if (data.fortigate) el.appendChild(mkBadge('🔥 ' + data.fortigate.name, 'neutral'));
-    if (data.cisco_switches) {
-      data.cisco_switches.forEach(sw =>
-        el.appendChild(mkBadge('🔌 ' + sw.name, 'neutral'))
-      );
-    }
-    if (data.ruckus_r1) el.appendChild(mkBadge('📡 R1 Cloud', 'neutral'));
-  } catch (_) {}
-}
-
-function mkBadge(text, type) {
-  const b = document.createElement('span');
-  b.className = `badge badge-${type}`;
-  b.textContent = text;
-  return b;
+function renderVendorBar() {
+  const vendors = [
+    // On-prem
+    { label: 'Fortinet',          icon: '🔥', group: 'onprem' },
+    { label: 'Cisco IOS/IOS-XE',  icon: '🔌', group: 'onprem' },
+    { label: 'Aruba S / CX',      icon: '🔷', group: 'onprem' },
+    { label: 'Ruckus ICX',        icon: '📡', group: 'onprem' },
+    { label: 'Extreme Networks',  icon: '⚡', group: 'onprem' },
+    // Cloud
+    { label: 'Ruckus One',        icon: '☁️', group: 'cloud'  },
+    { label: 'Aruba Central',     icon: '☁️', group: 'cloud'  },
+    { label: 'ExtremeCloud IQ',   icon: '☁️', group: 'cloud'  },
+  ];
+  const el = document.getElementById('deviceSummary');
+  el.innerHTML = vendors.map(v =>
+    `<span class="vendor-chip vendor-chip--${v.group}">${v.icon} ${v.label}</span>`
+  ).join('');
 }
 
 // ── Options panel ─────────────────────────────────────────────
@@ -661,6 +688,23 @@ function buildHopCard(hop, idx) {
   if (hop.raw_data && hop.raw_data.error) {
     body.innerHTML += `<div class="subsection-title">Connection Error</div>
       <div style="color:var(--crit);font-size:12px;font-family:monospace;padding:8px 0">${esc(hop.raw_data.error)}</div>`;
+  }
+
+  // System logs captured during SSH session
+  if (hop.system_logs && hop.system_logs.length) {
+    body.innerHTML += `<div class="subsection-title">System Logs</div>`;
+    const logList = document.createElement('div');
+    logList.className = 'system-logs';
+    hop.system_logs.forEach(entry => {
+      const row = document.createElement('div');
+      const sevCls = entry.severity === 'CRIT' ? 'log-crit'
+                   : entry.severity === 'ERR'  ? 'log-err'
+                   : 'log-warn';
+      row.className = `log-entry ${sevCls}`;
+      row.innerHTML = `<span class="log-sev">${esc(entry.severity)}</span><span class="log-msg">${esc(entry.message)}</span>`;
+      logList.appendChild(row);
+    });
+    body.appendChild(logList);
   }
 
   // Issues for this hop

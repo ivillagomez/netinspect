@@ -22,6 +22,10 @@ class DeviceType(str, Enum):
     CISCO_SWITCH = "cisco_switch"
     RUCKUS_SWITCH = "ruckus_switch"
     RUCKUS_AP = "ruckus_ap"
+    ARUBA_SWITCH = "aruba_switch"
+    ARUBA_AP = "aruba_ap"
+    EXTREME_SWITCH = "extreme_switch"
+    EXTREME_AP = "extreme_ap"
     WIRELESS_CLIENT = "wireless_client"
     WIRED_CLIENT = "wired_client"
     UNKNOWN = "unknown"
@@ -142,6 +146,7 @@ class Hop(BaseModel):
     raw_data: Dict[str, Any] = {}
     issues: List[Issue] = []
     tests: List[TestResult] = []
+    system_logs: List[Dict[str, str]] = []   # [{"severity": "CRIT|ERR|WARN", "message": "..."}]
     reachable: bool = True
 
 

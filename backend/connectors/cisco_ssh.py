@@ -170,7 +170,8 @@ class CiscoSwitch:
                     if options.poe:
                         result["poe_status"] = self._get_poe_status(port)
 
-                result["system_mtu"] = self._get_system_mtu()
+                result["system_mtu"]  = self._get_system_mtu()
+                result["system_logs"] = self._get_system_logs()
 
                 # Uplink port error counters — checks health of links toward upstream devices
                 # (Ruckus switch errors are visible here on the Cisco side of that link)
@@ -570,6 +571,36 @@ class CiscoSwitch:
             return result
         except Exception:
             return {}
+
+    def _get_system_logs(self) -> List[Dict]:
+        """Capture WARN/ERR/CRIT log entries via 'show logging'.
+
+        Cisco syslog severity is the digit in the mnemonic: %FAC-SEV-MNEMONIC
+        0-2 → CRIT, 3 → ERR, 4 → WARN. Returns up to 50 entries.
+        """
+        entries = []
+        try:
+            out = self._cmd(
+                "show logging | include %-[0-4]-"
+            )
+            sev_re = re.compile(r"%[\w]+-(\d+)-[\w]+", re.IGNORECASE)
+            for line in out.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                m = sev_re.search(line)
+                if not m:
+                    continue
+                level = int(m.group(1))
+                if level > 4:
+                    continue
+                sev = "CRIT" if level <= 2 else ("ERR" if level == 3 else "WARN")
+                entries.append({"severity": sev, "message": line})
+                if len(entries) >= 50:
+                    break
+        except Exception as e:
+            logger.debug("[%s] system_logs error: %s", self.name, e)
+        return entries
 
     def _get_etherchannel_members(self, port: str) -> List[Dict]:
         """show etherchannel <group> summary — member ports and bundle state for a Po interface."""
