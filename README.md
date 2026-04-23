@@ -155,8 +155,8 @@ sequenceDiagram
         API->>SW: show system mtu, show etherchannel summary
         SW-->>API: All diagnostics
     and Ruckus R1
-        API->>R1: GET /v1/clients (MAC lookup)
-        API->>R1: GET /v1/switches (topology)
+        API->>R1: POST /venues/aps/clients/query (MAC lookup)
+        API->>R1: POST /venues/switches/clients/query (switch port)
         R1-->>API: Client / switch / AP data
     end
 
@@ -373,6 +373,10 @@ cisco_switches:
     password: "YOUR_SSH_PASSWORD"
     device_type: "cisco_ios"           # See table below
     timeout: 30                        # SSH timeout in seconds
+    # Optional SNMP fast path — enables concurrent MAC + interface stats via SNMP
+    # snmp_community: "public"         # SNMP v2c community string (omit to disable)
+    # snmp_port: 161                   # Default: 161
+    # snmp_version: "2c"              # "1" or "2c"
 
   - name: "SW-Access"
     host: "192.168.1.x"
@@ -385,14 +389,30 @@ cisco_switches:
 
 # ── Ruckus One (R1) ────────────────────────────────────────────
 ruckus_r1:
-  base_url: "https://api.asia.ruckus.cloud"   # Region: asia | eu | (blank = NA)
-  api_key: "YOUR_RUCKUS_R1_API_KEY"
+  base_url: "https://api.asia.ruckus.cloud"   # Region: api.asia | api.eu | api (NA)
+  # OAuth2 client credentials — from portal: Administration → Settings → Application Tokens
+  client_id: "YOUR_CLIENT_ID"
+  client_secret: "YOUR_CLIENT_SECRET"
+  # Tenant ID — visible in the portal URL after login: asia.ruckus.cloud/<tenantId>/...
+  tenant_id: "YOUR_TENANT_ID"
 
 # ── Web Server ─────────────────────────────────────────────────
 server:
   host: "0.0.0.0"                      # 0.0.0.0 = all interfaces
   port: 8080
 ```
+
+### How to get Ruckus R1 credentials
+
+1. Log in to the Ruckus One portal (`asia.ruckus.cloud` or your regional URL)
+2. Go to **Administration → Settings → Application Tokens**
+3. Create a new token → copy the **Client ID** and **Client Secret**
+4. Your **Tenant ID** is in the portal URL after login: `asia.ruckus.cloud/<tenantId>/...`
+5. Set `base_url` to `https://api.asia.ruckus.cloud` (or your region's API domain)
+
+> The tool uses the OAuth2 Client Credentials flow — tokens are fetched automatically and cached for ~2 hours.
+
+---
 
 ### How to get the FortiGate API token
 
@@ -457,7 +477,7 @@ Disabling options speeds up traces and reduces SSH commands on the switches.
 
 **Path visualization** — left to right: FortiGate → switches → (AP) → device
 - Click any node to jump to its detail card
-- Port labels between nodes show the physical connection (e.g. `Gi1/0/24 ↔ Gi0/1`)
+- Port labels between nodes show the physical connection (e.g. `Gi1/0/24 → Gi0/1`)
 - Issue dot on a node = problems found (red = critical, amber = warning)
 
 **Issues Found** — each issue shows:
@@ -507,9 +527,10 @@ Disabling options speeds up traces and reduces SSH commands on the switches.
 - If SSH works but model info is missing, the `get system status` output format may differ slightly — check logs
 
 ### Ruckus R1 returns no data
-- Confirm the API key is valid in the Ruckus One portal
-- Verify `base_url` matches your region: `api.asia.ruckus.cloud` / `api.eu.ruckus.cloud` / `api.ruckus.cloud`
-- API key may not have access to all venues
+- Confirm `client_id` and `client_secret` are correct — generate them in Ruckus One portal under **Administration → Settings → Application Tokens**
+- Confirm `tenant_id` is set — find it in the portal URL after login: `asia.ruckus.cloud/<tenantId>/...`
+- Verify `base_url` matches your region: `https://api.asia.ruckus.cloud` / `https://api.eu.ruckus.cloud` / `https://api.ruckus.cloud`
+- Token exchange uses `https://asia.ruckus.cloud/oauth2/token/<tenantId>` (not the `api.*` subdomain)
 
 ### Ruckus switch shows no ports
 - The Ruckus ICX switch is discovered via CDP/LLDP from the Cisco switch — it does not need SSH credentials
@@ -541,7 +562,8 @@ netinspect/
 │   │   ├── fortigate.py         ← FortiGate REST API: ARP table, address objects, interfaces
 │   │   ├── fortigate_ssh.py     ← FortiGate SSH: platform info, egress port counters
 │   │   ├── cisco_ssh.py         ← Cisco SSH: MAC table, CDP/LLDP, ARP, STP, PoE, etherchannel
-│   │   └── ruckus_r1.py        ← Ruckus One REST: APs, managed switches, wireless clients
+│   │   ├── cisco_snmp.py        ← Optional SNMP fast path: MAC table + IF-MIB stats (puresnmp)
+│   │   └── ruckus_r1.py         ← Ruckus One REST: APs, managed switches, wireless clients (OAuth2)
 │   │
 │   └── tracer/
 │       ├── resolver.py          ← Parses MAC / IP / FortiGate address name input
@@ -564,7 +586,8 @@ resolver.py          Normalizes input → MAC + IP
 mac_tracer.py        Orchestrates parallel queries:
     ├── fortigate.py + fortigate_ssh.py   ARP entry, egress interface, FG platform
     ├── cisco_ssh.py (all switches)        MAC table, CDP/LLDP, diagnostics, ARP
-    └── ruckus_r1.py                       Wireless clients, AP info, switch ports
+    ├── cisco_snmp.py (optional)           Concurrent SNMP: MAC + interface stats
+    └── ruckus_r1.py                       Wireless clients, AP info, switch ports (OAuth2)
 
 mac_tracer.py        Chain-walk: edge switch → upstream via CDP/LLDP
                      Unknown hops (Ruckus ICX) enriched from R1
@@ -654,7 +677,7 @@ No inbound ports are needed other than `8080` for the web UI.
 | Docker / Unraid deployment | Done |
 | Export trace to PDF / CSV | Planned |
 | Saved trace history / comparison | Planned |
-| SNMP fallback for switches without SSH | Planned |
+| Optional SNMP fast path for Cisco switches (MAC + IF-MIB stats) | Done |
 | FortiAnalyzer log correlation | Planned |
 | Email / Teams alert on critical issues | Planned |
 | Palo Alto firewall support | Planned |
