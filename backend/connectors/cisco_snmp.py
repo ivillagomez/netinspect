@@ -10,7 +10,7 @@ SSH is still used for CDP/LLDP, STP, PoE, port-channel members, and
 IOS version details — things that either require CLI parsing or lack
 good MIB support on Cisco IOS.
 
-Requires: puresnmp>=2.2.0  (pure-Python, no C dependencies)
+Requires: puresnmp>=2.0.0  (pure-Python, no C dependencies)
 If puresnmp is not installed the module loads but HAS_SNMP is False
 and all methods return None gracefully.
 """
