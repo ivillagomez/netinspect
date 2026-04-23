@@ -2,7 +2,7 @@
 # Copy this file to config.yaml and fill in your values.
 # config.yaml is excluded from git (.gitignore) — never commit real credentials.
 
-# ── FortiGate ─────────────────────────────────────────────────
+# ── FortiGate (optional — remove this section for switch-only networks) ───────
 fortigate:
   host: "192.168.1.1"                  # FortiGate management IP
   port: 443                            # HTTPS port (default: 443)

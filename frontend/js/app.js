@@ -113,27 +113,58 @@ async function apiFetch(url, opts = {}) {
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  renderVendorBar();
+  initUI();
   document.getElementById('searchInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') doTrace();
   });
 });
 
-function renderVendorBar() {
-  const vendors = [
-    { label: 'Fortinet',     group: 'onprem' },
-    { label: 'Cisco IOS',   group: 'onprem' },
-    { label: 'Aruba',       group: 'onprem' },
-    { label: 'Ruckus ICX',  group: 'onprem' },
-    { label: 'Extreme',     group: 'onprem' },
-    { label: 'Ruckus One',  group: 'cloud'  },
-    { label: 'Aruba Central', group: 'cloud' },
-    { label: 'XIQ',         group: 'cloud'  },
-  ];
+async function initUI() {
+  let caps = {};
+  try {
+    const res = await fetch('/api/capabilities');
+    if (res.ok) caps = await res.json();
+  } catch (_) { /* server unreachable — show nothing */ }
+  renderVendorBar(caps);
+  updateSearchHints(caps);
+}
+
+function renderVendorBar(caps = {}) {
+  const vendors = [];
+  // On-prem — only show vendors that are actually configured
+  if (caps.fortigate)                              vendors.push({ label: 'Fortinet',      group: 'onprem' });
+  if (caps.cisco_switches)                         vendors.push({ label: 'Cisco IOS',     group: 'onprem' });
+  if (caps.aruba_switches)                         vendors.push({ label: 'Aruba',         group: 'onprem' });
+  if (caps.ruckus_r1)                              vendors.push({ label: 'Ruckus ICX',    group: 'onprem' });
+  // Cloud
+  if (caps.ruckus_r1)                              vendors.push({ label: 'Ruckus One',    group: 'cloud'  });
+  if (caps.aruba_central)                          vendors.push({ label: 'Aruba Central', group: 'cloud'  });
+  if (caps.extreme_iq)                             vendors.push({ label: 'XIQ',           group: 'cloud'  });
+
   const el = document.getElementById('deviceSummary');
+  if (!vendors.length) {
+    el.innerHTML = '<span class="badge badge-neutral">No integrations configured</span>';
+    return;
+  }
   el.innerHTML = vendors.map(v =>
     `<span class="vendor-chip vendor-chip--${v.group}">${v.label}</span>`
   ).join('');
+}
+
+function updateSearchHints(caps = {}) {
+  const parts = ['MAC address', 'IP address'];
+  if (caps.fortigate) parts.push('FortiGate address name');
+  document.getElementById('searchInput').placeholder = parts.join('  ·  ');
+
+  // Add FortiGate address name example only when FG is configured
+  const exRow = document.querySelector('.search-examples');
+  if (exRow && caps.fortigate && !exRow.querySelector('[data-fg-example]')) {
+    const code = document.createElement('code');
+    code.setAttribute('onclick', 'fillExample(this)');
+    code.setAttribute('data-fg-example', '1');
+    code.textContent = 'Server-Web-01';
+    exRow.appendChild(code);
+  }
 }
 
 function mkBadge(text, type) {

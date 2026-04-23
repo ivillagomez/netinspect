@@ -24,27 +24,34 @@ class Resolution:
     input_type: str = "unknown"        # mac | ip | fg_name
 
 
-async def resolve(query: str, fg: FortiGateClient) -> Resolution:
+async def resolve(query: str, fg: Optional[FortiGateClient]) -> Resolution:
     query = query.strip()
     res = Resolution()
 
     if MAC_RE.match(query):
         res.input_type = "mac"
         res.mac = mac_to_colon(query)
-        res.ip = await fg.get_ip_for_mac(res.mac)
+        if fg is not None:
+            res.ip = await fg.get_ip_for_mac(res.mac)
         return res
 
     if IP_RE.match(query):
         res.input_type = "ip"
         res.ip = query
-        res.mac = await fg.get_mac_for_ip(query)
-        if res.mac:
-            res.mac = mac_to_colon(res.mac)
+        if fg is not None:
+            res.mac = await fg.get_mac_for_ip(query)
+            if res.mac:
+                res.mac = mac_to_colon(res.mac)
+        # If fg is None, mac stays None — will be resolved from switch ARP tables in tracer
         return res
 
     # Treat as FortiGate address name
     res.input_type = "fg_name"
     res.fg_name = query
+    if fg is None:
+        # Can't resolve FG address names without a FortiGate configured
+        return res
+
     ip = await fg.resolve_address_name(query)
     if ip:
         res.ip = ip

@@ -69,12 +69,13 @@ class ExtremeIQConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    fortigate: FortiGateConfig
-    cisco_switches: List[CiscoSwitchConfig]
-    ruckus_r1: RuckusR1Config
-    aruba_switches: List[ArubaSwitchConfig] = []
-    aruba_central: Optional[ArubaCentralConfig] = None
-    extreme_iq: Optional[ExtremeIQConfig] = None
+    # All sections are optional — only configure what you have
+    fortigate:      Optional[FortiGateConfig]    = None   # None = no firewall / switch-only mode
+    cisco_switches: List[CiscoSwitchConfig]      = []     # SSH-managed Cisco IOS/IOS-XE switches
+    aruba_switches: List[ArubaSwitchConfig]      = []     # SSH-managed Aruba AOS-S/CX switches
+    ruckus_r1:      Optional[RuckusR1Config]     = None   # Ruckus One cloud API
+    aruba_central:  Optional[ArubaCentralConfig] = None   # Aruba Central cloud API
+    extreme_iq:     Optional[ExtremeIQConfig]    = None   # ExtremeCloud IQ cloud API
     server: ServerConfig = ServerConfig()
 
 

@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 class NetworkTracer:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.fg = FortiGateClient(config.fortigate)
-        self.fg_ssh = FortiGateSSH(config.fortigate)
+        self.fg     = FortiGateClient(config.fortigate) if config.fortigate else None
+        self.fg_ssh = FortiGateSSH(config.fortigate)    if config.fortigate else None
         self.cisco_switches  = [CiscoSwitch(sw) for sw in config.cisco_switches]
         self.aruba_switches  = [ArubaSwitch(sw) for sw in config.aruba_switches]
-        self.r1              = RuckusR1Client(config.ruckus_r1)
+        self.r1              = RuckusR1Client(config.ruckus_r1) if config.ruckus_r1 else None
         self.aruba_central   = ArubaCentralClient(config.aruba_central) if config.aruba_central else None
         self.extreme_iq      = ExtremeIQClient(config.extreme_iq) if config.extreme_iq else None
 
@@ -41,7 +41,7 @@ class NetworkTracer:
 
         # Step 1 — Resolve input → MAC + IP
         try:
-            resolution = await _resolver.resolve(query, self.fg)
+            resolution = await _resolver.resolve(query, self.fg)  # fg may be None
         except Exception as e:
             logger.error(f"Resolution failed: {e}")
             result.status = "error"
@@ -53,29 +53,76 @@ class NetworkTracer:
         result.resolved_ip = resolution.ip
         result.resolved_fg_name = resolution.fg_name
 
-        if not resolution.mac:
+        # FG address-name input with no FortiGate configured
+        if not resolution.mac and resolution.input_type == "fg_name":
             result.status = "not_found"
             result.error = (
+                "FortiGate address name resolution requires a configured FortiGate. "
+                "Please enter a MAC address or IP address."
+                if not self.fg else
                 f"Could not resolve '{query}' to a MAC address. "
                 "Ensure the device is active and present in the FortiGate ARP table."
             )
             result.trace_time_ms = int((time.time() - start) * 1000)
             return result
 
-        mac = resolution.mac
-        norm_mac = normalize_mac(mac)
-
-        # Step 2 — FortiGate hop (always first)
-        fg_hop = await self._build_fg_hop(mac, resolution.ip)
-        result.path.append(fg_hop)
+        # Step 2 — FortiGate hop (only if FG configured)
+        if self.fg and resolution.mac:
+            fg_hop = await self._build_fg_hop(resolution.mac, resolution.ip)
+            result.path.append(fg_hop)
 
         # Step 3 — Query all switches (Cisco + Aruba) in parallel
+        # norm_mac may be empty string if we only have an IP (no FG configured) — switches
+        # will still return ARP tables which we use for the two-pass MAC resolution below.
+        norm_mac = normalize_mac(resolution.mac) if resolution.mac else ""
+
         all_sw_tasks = (
             [sw.gather_all(norm_mac, options) for sw in self.cisco_switches]
             + [sw.gather_all(norm_mac, options) for sw in self.aruba_switches]
         )
         all_sw_results = await asyncio.gather(*all_sw_tasks, return_exceptions=True)
         all_sw_results  = [r for r in all_sw_results if isinstance(r, dict)]
+
+        # Two-pass: if we have an IP but no MAC yet (IP input without FG), try to
+        # resolve the MAC from switch ARP tables collected in the first pass.
+        if not resolution.mac and resolution.ip:
+            found_mac = self._find_mac_in_arp_tables(all_sw_results, resolution.ip)
+            if found_mac:
+                resolution.mac = found_mac
+                result.resolved_mac = found_mac
+                norm_mac = normalize_mac(found_mac)
+                logger.info(
+                    "[two_pass] Resolved IP %s → MAC %s from switch ARP tables — re-querying switches",
+                    resolution.ip, norm_mac,
+                )
+                # Re-run switch queries with the correct MAC so mac_entry is populated
+                all_sw_tasks2 = (
+                    [sw.gather_all(norm_mac, options) for sw in self.cisco_switches]
+                    + [sw.gather_all(norm_mac, options) for sw in self.aruba_switches]
+                )
+                all_sw_results2 = await asyncio.gather(*all_sw_tasks2, return_exceptions=True)
+                all_sw_results  = [r for r in all_sw_results2 if isinstance(r, dict)]
+            else:
+                result.status = "not_found"
+                result.error = (
+                    f"Could not resolve IP {resolution.ip} to a MAC address. "
+                    "No switch ARP table contains this IP. "
+                    "Try entering the MAC address directly."
+                )
+                result.trace_time_ms = int((time.time() - start) * 1000)
+                return result
+
+        # After the two-pass attempt, if we still have no MAC, give up
+        if not resolution.mac:
+            result.status = "not_found"
+            result.error = (
+                f"Could not resolve '{query}' to a MAC address. "
+                "Ensure the device is active and reachable."
+            )
+            result.trace_time_ms = int((time.time() - start) * 1000)
+            return result
+
+        mac = resolution.mac
         cisco_results   = [r for r in all_sw_results if r.get("vendor") != "aruba"]
         aruba_results   = [r for r in all_sw_results if r.get("vendor") == "aruba"]
 
@@ -87,8 +134,8 @@ class NetworkTracer:
         xiq_client      = None
         try:
             cloud_coros = [
-                self.r1.find_client_by_mac(norm_mac),
-                self.r1.find_switch_port_for_mac(norm_mac),
+                self.r1.find_client_by_mac(norm_mac)        if self.r1           else asyncio.sleep(0),
+                self.r1.find_switch_port_for_mac(norm_mac)  if self.r1           else asyncio.sleep(0),
                 self.aruba_central.find_wired_client(norm_mac)    if self.aruba_central else asyncio.sleep(0),
                 self.aruba_central.find_wireless_client(norm_mac) if self.aruba_central else asyncio.sleep(0),
                 self.extreme_iq.find_client(norm_mac)             if self.extreme_iq    else asyncio.sleep(0),
@@ -260,7 +307,7 @@ class NetworkTracer:
         Display order: core-most switch first (order=1) so that the rendered
         path reads  FG → core → … → access → device.
         """
-        fg_ip = self.config.fortigate.host
+        fg_ip = self.config.fortigate.host if self.config.fortigate else None
         hops_raw: List[Dict] = []   # accumulated in edge→core order
         visited: set = set()
 
@@ -337,7 +384,7 @@ class NetworkTracer:
                         break
 
             # Enrich intermediate hop with R1 data (model, ports) when CDP/LLDP is incomplete
-            r1_sw = await self.r1.get_switch_by_name_or_ip(name=neighbor_name, ip=neighbor_ip or "")
+            r1_sw = await self.r1.get_switch_by_name_or_ip(name=neighbor_name, ip=neighbor_ip or "") if self.r1 else None
             if r1_sw and (not inter_ingress or not inter_egress):
                 sw_id = r1_sw.get("id") or r1_sw.get("switchId")
                 if sw_id:
@@ -783,6 +830,8 @@ class NetworkTracer:
         )
 
     async def _build_ap_hop(self, ap_id: str, order: int) -> Optional[Hop]:
+        if not self.r1:
+            return None
         try:
             ap = await self.r1.get_ap_by_id(ap_id)
             logger.info(f"[ap_hop] get_ap_by_id({ap_id!r}) → keys={list(ap.keys()) if ap else None}")
@@ -963,7 +1012,7 @@ class NetworkTracer:
         if not is_ruckus_switch:
             return None
 
-        r1_sw = await self.r1.get_switch_by_name_or_ip(name=name, ip=ip or "")
+        r1_sw = await self.r1.get_switch_by_name_or_ip(name=name, ip=ip or "") if self.r1 else None
         ingress_port = getattr(access_nbr, "remote_port", None)  # port on ICX facing the Cisco switch
 
         return self._build_intermediate_hop(
@@ -1022,13 +1071,14 @@ class NetworkTracer:
             nbr_mac = normalize_mac(nbr.remote_device) if _looks_like_mac(nbr.remote_device) else None
             order = (last_sw_hop.order + 1) if last_sw_hop else 10
             ap = None
-            if nbr_mac:
-                ap = await self.r1.get_ap_by_mac(nbr_mac)
-            if not ap and nbr_ip:
-                for candidate in await self.r1.get_all_aps():
-                    if candidate.get("ip") == nbr_ip or candidate.get("ipAddress") == nbr_ip:
-                        ap = candidate
-                        break
+            if self.r1:
+                if nbr_mac:
+                    ap = await self.r1.get_ap_by_mac(nbr_mac)
+                if not ap and nbr_ip:
+                    for candidate in await self.r1.get_all_aps():
+                        if candidate.get("ip") == nbr_ip or candidate.get("ipAddress") == nbr_ip:
+                            ap = candidate
+                            break
 
             if ap:
                 ap_id = ap.get("id") or ap.get("apId")
@@ -1075,6 +1125,23 @@ class NetworkTracer:
                     "switch_poe":         sw_poe.model_dump()         if sw_poe         else None,
                 },
             )
+        return None
+
+
+    def _find_mac_in_arp_tables(self, sw_results: List[Dict], ip: str) -> Optional[str]:
+        """Search ARP tables collected from all switches to resolve IP → MAC.
+        Used when no FortiGate is configured.  Returns colon-formatted MAC or None.
+        """
+        from backend.connectors.fortigate import mac_to_colon
+        for raw in sw_results:
+            for entry in raw.get("arp_table", []):
+                if entry.get("ip") == ip and entry.get("mac"):
+                    norm = normalize_mac(entry["mac"])
+                    logger.info(
+                        "[arp_resolve] IP %s → MAC %s (from switch %s ARP table)",
+                        ip, norm, raw.get("switch", "?"),
+                    )
+                    return mac_to_colon(norm)
         return None
 
 

@@ -143,13 +143,37 @@ async def list_devices():
     try:
         cfg = load_config()
         return {
-            "fortigate":      {"name": "FortiGate"},
+            "fortigate":      {"name": "FortiGate"} if cfg.fortigate else None,
             "cisco_switches": [{"name": sw.name} for sw in cfg.cisco_switches],
-            "ruckus_r1":      {"name": "Ruckus One"},
+            "aruba_switches": [{"name": sw.name} for sw in cfg.aruba_switches],
+            "ruckus_r1":      {"name": "Ruckus One"} if cfg.ruckus_r1 else None,
         }
     except Exception as e:
         logger.error(f"Devices listing error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to load device list")
+
+
+@app.get("/api/capabilities")
+async def capabilities():
+    """Non-sensitive capability flags — tells the frontend which integrations are active.
+    No auth required: used at page load before the user enters an API key.
+    """
+    try:
+        cfg = load_config()
+        return {
+            "fortigate":      bool(cfg.fortigate),
+            "cisco_switches": len(cfg.cisco_switches),
+            "aruba_switches": len(cfg.aruba_switches),
+            "ruckus_r1":      bool(cfg.ruckus_r1),
+            "aruba_central":  bool(cfg.aruba_central),
+            "extreme_iq":     bool(cfg.extreme_iq),
+        }
+    except Exception as e:
+        logger.error(f"Capabilities error: {e}", exc_info=True)
+        return {
+            "fortigate": False, "cisco_switches": 0, "aruba_switches": 0,
+            "ruckus_r1": False, "aruba_central": False, "extreme_iq": False,
+        }
 
 
 @app.get("/api/health")
