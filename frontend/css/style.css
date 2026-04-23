@@ -665,22 +665,33 @@ body {
 
 /* ── Theme toggle button ─────────────────────────────────────── */
 .theme-toggle {
-  background: none;
-  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.18);
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--text-dim);
   cursor: pointer;
-  padding: 4px 9px;
+  padding: 5px 11px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
   font-family: inherit;
-  transition: border-color var(--transition), color var(--transition);
+  transition: border-color var(--transition), color var(--transition), background var(--transition);
   line-height: 1;
+  white-space: nowrap;
 }
-.theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
-.theme-toggle svg { width: 13px; height: 13px; }
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.theme-toggle svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+[data-theme="light"] .theme-toggle {
+  background: rgba(0,0,0,0.05);
+  border-color: rgba(0,0,0,0.18);
+}
 
 /* ── Light theme ─────────────────────────────────────────────── */
 [data-theme="light"] {

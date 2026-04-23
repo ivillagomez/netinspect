@@ -114,6 +114,7 @@ async function apiFetch(url, opts = {}) {
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initUI();
+  _syncThemeButton();   // set label/icon to match saved theme
   document.getElementById('searchInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') doTrace();
   });
@@ -205,17 +206,22 @@ function getOptions() {
 }
 
 function toggleTheme() {
-  const html = document.documentElement;
+  const html  = document.documentElement;
   const isLight = html.getAttribute('data-theme') === 'light';
-  const next = isLight ? 'dark' : 'light';
-  if (next === 'light') {
-    html.setAttribute('data-theme', 'light');
-  } else {
+  if (isLight) {
     html.removeAttribute('data-theme');
+  } else {
+    html.setAttribute('data-theme', 'light');
   }
-  localStorage.setItem('netinspect_theme', next);
-  const btn = document.getElementById('themeToggle');
-  if (btn) btn.title = isLight ? 'Switch to light mode' : 'Switch to dark mode';
+  localStorage.setItem('netinspect_theme', isLight ? 'dark' : 'light');
+  _syncThemeButton();
+}
+
+function _syncThemeButton() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const label = document.getElementById('themeLabel');
+  if (label) label.textContent = isLight ? 'Dark' : 'Light';
+  // icon visibility is handled by CSS [data-theme="light"] rules
 }
 
 // ── Trace ─────────────────────────────────────────────────────
