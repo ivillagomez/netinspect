@@ -652,11 +652,17 @@ function buildHopCard(hop, idx) {
   // FortiGate egress interface stats (from SSH)
   if (hop.device_type === 'firewall' && hop.raw_data && hop.raw_data.interface_stats) {
     const s = hop.raw_data.interface_stats;
-    if (Object.keys(s).length) {
-      body.innerHTML += `<div class="subsection-title">Egress Interface (${hop.egress_port || ''})</div>`;
+    if (Object.keys(s).filter(k => k !== 'lag_parent').length) {
+      // If the port is a LAG member, stats come from the parent aggregate interface
+      const portLabel = s.lag_parent
+        ? `${hop.egress_port || ''} → ${s.lag_parent} (LAG)`
+        : (hop.egress_port || '');
+      body.innerHTML += `<div class="subsection-title">Egress Interface (${esc(portLabel)})</div>`;
       body.appendChild(buildDetailGrid([
         ['RX Packets', s.rx_packets != null ? s.rx_packets.toLocaleString() : '–'],
         ['TX Packets', s.tx_packets != null ? s.tx_packets.toLocaleString() : '–'],
+        ['RX Bytes',   s.rx_bytes   != null ? fmtBps(s.rx_bytes)  : '–'],
+        ['TX Bytes',   s.tx_bytes   != null ? fmtBps(s.tx_bytes)  : '–'],
         ['RX Errors',  s.rx_errors  != null ? s.rx_errors  : '–', s.rx_errors  > 0 ? 'warn' : 'ok'],
         ['TX Errors',  s.tx_errors  != null ? s.tx_errors  : '–', s.tx_errors  > 0 ? 'warn' : 'ok'],
         ['RX Drops',   s.rx_drops   != null ? s.rx_drops   : '–', s.rx_drops   > 0 ? 'warn' : 'ok'],

@@ -94,14 +94,44 @@ class FortiGateSSH:
             logger.debug(f"FortiGate SSH platform_info error: {e}")
             return {}
 
+    def _resolve_effective_interface(self, interface: str, iface_output: str) -> str:
+        """
+        If the interface is a LAG member (master=<non-zero>), return the name of the
+        parent aggregate interface so callers can query stats from it instead.
+        Uses the full 'diagnose netlink interface list' output to look up by index.
+        Returns the original interface name if it is not a LAG member.
+        """
+        m = re.search(r'\bmaster=(\d+)\b', iface_output)
+        if not m or m.group(1) == '0':
+            return interface   # standalone interface — no LAG
+
+        parent_idx = m.group(1)
+        logger.info("[FG SSH] %s is a LAG member (master index %s) — locating parent", interface, parent_idx)
+        try:
+            all_out = self._cmd("diagnose netlink interface list")
+            # Each block has fields on one line: name=agg1 family=0 type=778 index=5 mtu=... master=0
+            for line in all_out.splitlines():
+                if f"index={parent_idx}" in line and "master=0" in line:
+                    nm = re.search(r'name=(\S+)', line)
+                    if nm:
+                        parent = nm.group(1)
+                        logger.info("[FG SSH] LAG parent for %s → %s", interface, parent)
+                        return parent
+        except Exception as e:
+            logger.debug("[FG SSH] LAG parent lookup failed: %s", e)
+
+        return interface   # couldn't resolve parent — fall back to original
+
     def _get_interface_stats(self, interface: str) -> Dict:
         """
         diagnose netlink interface list <iface>
         Returns RX/TX packet+byte+error+drop counters and MTU.
 
         FortiOS uses abbreviated field names (rxpkt/txpkt/rxbyt/txbyt/rxerr/txerr/rxdrp/txdrp)
-        but some versions use the full form (rxpackets etc.).  Parse each field individually
-        so the code is resilient to either format.
+        but some versions use the full form (rxpackets etc.).  Parse each field individually.
+
+        If the interface is a LAG member port, transparently queries the parent aggregate
+        interface so the counters represent real traffic (member ports carry no useful stats).
         """
         if not re.match(r'^[\w\-./]+$', interface):
             logger.warning("Skipping interface stats: invalid interface name")
@@ -109,6 +139,14 @@ class FortiGateSSH:
         try:
             out = self._cmd(f"diagnose netlink interface list {interface}")
             logger.debug("[FG SSH] interface list output for %s:\n%s", interface, out[:600])
+
+            # If this port is a LAG member, switch to the parent aggregate for real stats
+            effective = self._resolve_effective_interface(interface, out)
+            lag_parent = None
+            if effective != interface:
+                lag_parent = effective
+                out = self._cmd(f"diagnose netlink interface list {effective}")
+                logger.debug("[FG SSH] LAG parent %s output:\n%s", effective, out[:600])
 
             def _pstat(key_re: str) -> int:
                 m = re.search(key_re + r'=(\d+)', out, re.IGNORECASE)
@@ -131,8 +169,11 @@ class FortiGateSSH:
             if m:
                 stats["mtu"] = int(m.group(1))
 
+            if lag_parent:
+                stats["lag_parent"] = lag_parent   # UI can annotate the section header
+
             # Return empty dict only if nothing was parsed (SSH ran but output was unrecognised)
-            if all(v == 0 for k, v in stats.items() if k != "mtu"):
+            if all(v == 0 for k, v in stats.items() if k not in ("mtu", "lag_parent")):
                 logger.debug("[FG SSH] interface stats: no counters parsed from output")
                 return {}
             return stats
