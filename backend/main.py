@@ -227,11 +227,31 @@ async def r1_test():
     return safe
 
 
+def _read_version() -> str:
+    """Read the VERSION file from the project root. Falls back to 'unknown'."""
+    candidates = [
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "VERSION"),
+        os.path.join(os.getcwd(), "VERSION"),
+        "/app/VERSION",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+            except Exception:
+                pass
+    return "unknown"
+
+
 @app.get("/api/ui-config")
 async def ui_config():
     """Non-sensitive config the frontend needs to bootstrap."""
     cfg = load_config()
-    return {"api_key_required": bool(cfg.server.api_key)}
+    return {
+        "api_key_required": bool(cfg.server.api_key),
+        "version": _read_version(),
+    }
 
 
 # ── Static frontend ────────────────────────────────────────────────────────────

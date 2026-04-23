@@ -122,10 +122,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function initUI() {
   let caps = {};
+  let uiCfg = {};
   try {
-    const res = await fetch('/api/capabilities');
-    if (res.ok) caps = await res.json();
+    const [capsRes, cfgRes] = await Promise.all([
+      fetch('/api/capabilities'),
+      fetch('/api/ui-config'),
+    ]);
+    if (capsRes.ok) caps   = await capsRes.json();
+    if (cfgRes.ok)  uiCfg  = await cfgRes.json();
   } catch (_) { /* server unreachable — show nothing */ }
+
+  // Update footer version label if served version is available
+  if (uiCfg.version) {
+    const vEl = document.getElementById('versionLabel');
+    if (vEl) vEl.textContent = 'v' + uiCfg.version;
+  }
+
   renderVendorBar(caps);
   updateSearchHints(caps);
 }
