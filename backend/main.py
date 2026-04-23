@@ -3,6 +3,7 @@ import hmac
 import logging
 import os
 from fastapi import FastAPI, HTTPException, Depends, Security, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -51,6 +52,38 @@ class SPAMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SPAMiddleware)
+
+
+# ── Security headers ───────────────────────────────────────────────────────────
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        # Self-hosted SPA: allow inline styles/scripts (no CDN deps needed)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "object-src 'none'"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# ── CORS ───────────────────────────────────────────────────────────────────────
+# Designed for local/LAN deployment; restrict allow_origins to specific hosts if
+# exposed beyond the local network.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["X-API-Key", "Content-Type"],
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -126,17 +159,43 @@ async def health():
 
 @app.get("/api/r1/test", dependencies=[Depends(verify_api_key)])
 async def r1_test():
-    """Probe Ruckus One API and return the raw HTTP result for diagnostics."""
+    """Probe Ruckus One API and return sanitized diagnostics (no tokens or response bodies)."""
     logger.info("R1 test endpoint called")
     tracer = get_tracer()
-    result = await tracer.r1.test_connection()
-    # Redact auth headers before returning
-    if "headers_sent" in result:
-        hdrs = result["headers_sent"]
-        for k in list(hdrs.keys()):
-            if "auth" in k.lower() or "key" in k.lower():
-                hdrs[k] = hdrs[k][:8] + "…" if len(hdrs.get(k, "")) > 8 else "***"
-    return result
+    raw = await tracer.r1.test_connection()
+
+    # Strip all sensitive fields before returning to the caller:
+    #  - token_prefix  (partial JWT — still useful to an attacker)
+    #  - probe response body snippets (may contain partial token data or server internals)
+    #  - any error strings that might include OAuth details
+    safe: dict = {
+        "base_url":              raw.get("base_url"),
+        "auth_mode":             raw.get("auth_mode"),
+        "tenant_id_configured":  raw.get("tenant_id_configured"),
+        "token_obtained":        raw.get("token_obtained"),
+    }
+
+    # Include per-probe HTTP status codes and redirect locations only — no response bodies
+    raw_probes = raw.get("probes") or {}
+    safe["probes"] = {
+        url: {k: v for k, v in probe.items() if k in ("status", "location", "error")}
+        for url, probe in raw_probes.items()
+    }
+    # Sanitize probe "error" fields too (they can contain full exception text)
+    for probe in safe["probes"].values():
+        if "error" in probe:
+            probe["error"] = "Connection error — see server logs"
+
+    # Include GET/POST venue probe status codes (no snippets)
+    for key in ("GET /venues", "POST /venues/aps/query"):
+        if key in raw:
+            entry = raw[key]
+            safe[key] = {"status": entry.get("status")} if "status" in entry else {"error": "probe failed"}
+
+    if raw.get("error"):
+        safe["error"] = raw["error"]
+
+    return safe
 
 
 @app.get("/api/ui-config")

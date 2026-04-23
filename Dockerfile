@@ -13,6 +13,10 @@ COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 COPY run.py .
 
+# Drop root — run as an unprivileged user
+RUN useradd -r -s /bin/false appuser && chown -R appuser /app
+USER appuser
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

@@ -40,7 +40,9 @@ class FortiGateClient:
             r.raise_for_status()
             return r.json()
         except Exception as e:
-            logger.warning(f"FortiGate GET {path} failed: {e}")
+            # Log only the exception type, not the full message — URL params / headers
+            # in exception bodies could leak the Bearer token in future code paths.
+            logger.warning("FortiGate GET %s failed: %s", path, type(e).__name__)
             return None
 
     async def close(self):

@@ -15,6 +15,21 @@ from backend.models import (
 logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=10)
 
+# Whitelist for interface / port names used in CLI commands.
+# Prevents command injection if a compromised switch returns a crafted MAC table entry.
+_SAFE_PORT_RE = re.compile(r'^[\w\-./]+$')
+
+
+def _safe_port(port: str) -> str:
+    """Validate a port/interface name before interpolating into a CLI command.
+
+    Raises ValueError if the name contains characters outside the safe set so the
+    caller can catch it and skip the command rather than injecting arbitrary text.
+    """
+    if not _SAFE_PORT_RE.match(port):
+        raise ValueError(f"Unsafe port name rejected: {port!r}")
+    return port
+
 
 def normalize_mac(mac: str) -> str:
     return re.sub(r"[.:\-]", "", mac).lower()
@@ -165,12 +180,15 @@ class CiscoSwitch:
                     options,
                 )
 
-            except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
-                result["error"] = str(e)
-                logger.warning(f"[{self.name}] Connection failed: {e}")
+            except NetmikoTimeoutException:
+                result["error"] = "Connection timed out"
+                logger.warning("[%s] SSH connection timed out", self.name)
+            except NetmikoAuthenticationException:
+                result["error"] = "Authentication failed"
+                logger.warning("[%s] SSH authentication failed", self.name)
             except Exception as e:
-                result["error"] = str(e)
-                logger.warning(f"[{self.name}] Error: {e}")
+                result["error"] = "Unexpected error during trace"
+                logger.warning("[%s] Error: %s", self.name, type(e).__name__, exc_info=True)
             finally:
                 self._disconnect()
             return result
@@ -338,7 +356,7 @@ class CiscoSwitch:
         """show mac address-table interface <port> — all MACs seen on this port."""
         entries = []
         try:
-            out = self._cmd(f"show mac address-table interface {port}")
+            out = self._cmd(f"show mac address-table interface {_safe_port(port)}")
             pattern = re.compile(
                 r"^\s*(\d+)\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+(\w+)\s+(\S+)",
                 re.MULTILINE | re.IGNORECASE,
@@ -375,7 +393,7 @@ class CiscoSwitch:
     def _get_interface_status(self, port: str) -> Optional[InterfaceStatus]:
         """show interfaces <port> status"""
         try:
-            out = self._cmd(f"show interfaces {port} status")
+            out = self._cmd(f"show interfaces {_safe_port(port)} status")
             pattern = re.compile(
                 r"^(\S+)\s+(\S*)\s+(connected|notconnect|err-disabled|disabled|inactive)\s+(\S+)\s+(\S+)\s+(\S+)\s*(.*)?$",
                 re.MULTILINE | re.IGNORECASE,
@@ -397,7 +415,7 @@ class CiscoSwitch:
     def _get_interface_details(self, port: str) -> Optional[InterfaceDetails]:
         """show interfaces <port>"""
         try:
-            out = self._cmd(f"show interfaces {port}")
+            out = self._cmd(f"show interfaces {_safe_port(port)}")
             is_up = bool(re.search(r"is up, line protocol is up", out, re.IGNORECASE))
             err_disabled = bool(re.search(r"err-disabled", out, re.IGNORECASE))
 
@@ -452,7 +470,7 @@ class CiscoSwitch:
     def _is_trunk_port(self, port: str) -> bool:
         """show interfaces <port> trunk — Cisco outputs 'not-trunking' for access ports."""
         try:
-            out = self._cmd(f"show interfaces {port} trunk")
+            out = self._cmd(f"show interfaces {_safe_port(port)} trunk")
             # 'not-trunking' (hyphen) appears for access ports; match either form
             if re.search(r"not.trunking", out, re.IGNORECASE):
                 return False
@@ -463,7 +481,7 @@ class CiscoSwitch:
     def _get_cdp_neighbor(self, port: str) -> Optional[CDPNeighbor]:
         """show cdp neighbors <port> detail"""
         try:
-            out = self._cmd(f"show cdp neighbors {port} detail")
+            out = self._cmd(f"show cdp neighbors {_safe_port(port)} detail")
             return self._parse_single_cdp_entry(port, out)
         except Exception as e:
             logger.debug(f"[{self.name}] cdp_neighbor error: {e}")
@@ -472,7 +490,7 @@ class CiscoSwitch:
     def _get_lldp_neighbor(self, port: str) -> Optional[LLDPNeighbor]:
         """show lldp neighbors <port> detail"""
         try:
-            out = self._cmd(f"show lldp neighbors {port} detail")
+            out = self._cmd(f"show lldp neighbors {_safe_port(port)} detail")
             return self._parse_single_lldp_entry(port, out)
         except Exception as e:
             logger.debug(f"[{self.name}] lldp_neighbor error: {e}")
@@ -496,7 +514,7 @@ class CiscoSwitch:
 
     def _get_stp_info(self, port: str) -> List[STPPortInfo]:
         try:
-            out = self._cmd(f"show spanning-tree interface {port}")
+            out = self._cmd(f"show spanning-tree interface {_safe_port(port)}")
             results = []
             pattern = re.compile(
                 r"(VLAN\d+|MST\d+)\s+(Root|Desg|Altn|Back|Mstr)\s+(FWD|BLK|LIS|LRN|DIS)\s+(\d+)",
@@ -513,7 +531,7 @@ class CiscoSwitch:
 
     def _get_poe_status(self, port: str) -> Optional[PoEStatus]:
         try:
-            out = self._cmd(f"show power inline {port}")
+            out = self._cmd(f"show power inline {_safe_port(port)}")
             if "Invalid" in out or "not found" in out.lower() or "% Error" in out:
                 return None
             pattern = re.compile(
