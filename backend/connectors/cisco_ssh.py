@@ -581,7 +581,7 @@ class CiscoSwitch:
         entries = []
         try:
             out = self._cmd(
-                "show logging | include %-[0-4]-"
+                "show logging | include -[0-4]-"
             )
             sev_re = re.compile(r"%[\w]+-(\d+)-[\w]+", re.IGNORECASE)
             for line in out.splitlines():
