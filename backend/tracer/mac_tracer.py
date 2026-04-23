@@ -385,7 +385,8 @@ class NetworkTracer:
 
             # Enrich intermediate hop with R1 data (model, ports) when CDP/LLDP is incomplete
             r1_sw = await self.r1.get_switch_by_name_or_ip(name=neighbor_name, ip=neighbor_ip or "") if self.r1 else None
-            if r1_sw and (not inter_ingress or not inter_egress):
+            r1_ingress_port_data: Optional[Dict] = None
+            if r1_sw:
                 sw_id = r1_sw.get("id") or r1_sw.get("switchId")
                 if sw_id:
                     ports = await self.r1.get_switch_ports(str(sw_id))
@@ -403,11 +404,23 @@ class NetworkTracer:
                     if not inter_ingress and access_ports:
                         inter_ingress = str(access_ports[0].get("portName") or access_ports[0].get("name") or "")
 
+                    # Find the specific ingress port entry so the UI can show speed/duplex
+                    if inter_ingress:
+                        for p in ports:
+                            pname = p.get("portName") or p.get("name") or ""
+                            if pname and pname == inter_ingress:
+                                r1_ingress_port_data = p
+                                break
+                    # Fall back to first uplink port if ingress matched nothing
+                    if not r1_ingress_port_data and uplink_ports:
+                        r1_ingress_port_data = uplink_ports[0]
+
             inter_hop = self._build_intermediate_hop(
                 uplink, len(hops_raw) + 1,
                 ingress_port=inter_ingress,
                 egress_port=inter_egress,
                 r1_data=r1_sw,
+                r1_port_data=r1_ingress_port_data,
             )
             hops_raw.append({
                 "hop": inter_hop,
@@ -776,8 +789,13 @@ class NetworkTracer:
         ingress_port: Optional[str] = None,
         egress_port: Optional[str] = None,
         r1_data: Optional[Dict] = None,
+        r1_port_data: Optional[Dict] = None,
     ) -> Hop:
-        """Build a hop for a device we can't SSH into (identified via CDP/LLDP and/or R1)."""
+        """Build a hop for a device we can't SSH into (identified via CDP/LLDP and/or R1).
+
+        r1_port_data — the R1 switch port dict for the ingress port (from get_switch_ports()).
+        Stored in raw_data so the UI can render speed/duplex/status for the ICX port.
+        """
         name     = getattr(neighbor, "remote_device", "Unknown")
         ip       = getattr(neighbor, "remote_ip", None)
         platform = getattr(neighbor, "platform", "") or getattr(neighbor, "system_description", "")
@@ -808,7 +826,12 @@ class NetworkTracer:
             model=model,
             ingress_port=ingress_port,
             egress_port=egress_port,
-            raw_data={"platform": platform, "source": "cdp_lldp", "r1_data": r1_data or {}},
+            raw_data={
+                "platform":     platform,
+                "source":       "cdp_lldp",
+                "r1_data":      r1_data or {},
+                "r1_port_data": r1_port_data or {},   # ingress port speed/duplex/status from R1
+            },
         )
 
     def _build_r1_switch_hop(self, r1_switch_info: Dict, order: int) -> Hop:

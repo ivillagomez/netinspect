@@ -43,6 +43,10 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8080
     api_key: Optional[str] = None
+    # Restrict CORS to specific origins for non-LAN deployments.
+    # Empty list (default) = allow all origins ("*") — fine for a trusted LAN.
+    # Example: ["http://192.168.1.50:8080", "http://netinspect.internal"]
+    allowed_origins: List[str] = []
 
 
 class ArubaSwitchConfig(BaseModel):

@@ -172,9 +172,14 @@ class FortiGateSSH:
             if lag_parent:
                 stats["lag_parent"] = lag_parent   # UI can annotate the section header
 
-            # Return empty dict only if nothing was parsed (SSH ran but output was unrecognised)
-            if all(v == 0 for k, v in stats.items() if k not in ("mtu", "lag_parent")):
-                logger.debug("[FG SSH] interface stats: no counters parsed from output")
+            # Return empty dict only if MTU is also absent — a true parse failure (no
+            # recognisable output at all).  Software / zone interfaces such as "users"
+            # legitimately have zero packet counters but a valid MTU; still return their
+            # stats so the UI can display the MTU and port label.
+            if stats.get("mtu", 0) == 0 and all(
+                v == 0 for k, v in stats.items() if k not in ("mtu", "lag_parent")
+            ):
+                logger.debug("[FG SSH] interface stats: no counters or MTU parsed — skipping")
                 return {}
             return stats
         except Exception as e:

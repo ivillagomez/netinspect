@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NetInspect</title>
   <link rel="stylesheet" href="/static/css/style.css" />
+  <!-- Apply saved theme before first paint to prevent flash -->
+  <script>
+    (function(){
+      var t = localStorage.getItem('netinspect_theme');
+      if (t === 'light') document.documentElement.setAttribute('data-theme','light');
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
@@ -98,6 +105,12 @@
               <span class="opt-label">Neighbor Info</span>
               <span class="opt-desc">CDP / LLDP per-port neighbor</span>
             </label>
+            <label class="opt-toggle">
+              <input type="checkbox" id="opt_system_logs" checked onchange="updateOptionsLabel()">
+              <span class="opt-slider"></span>
+              <span class="opt-label">System Logs</span>
+              <span class="opt-desc">Recent error/warning syslog entries</span>
+            </label>
           </div>
         </div>
       </div>
@@ -164,6 +177,17 @@
       </div>
       <div class="app-footer-right">
         <span>v1.0</span>
+        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Switch to light mode">
+          <!-- Sun icon (shown in dark mode → click to go light) -->
+          <svg id="themeIconSun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+          <!-- Moon icon (shown in light mode → click to go dark) -->
+          <svg id="themeIconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
       </div>
     </footer>
 

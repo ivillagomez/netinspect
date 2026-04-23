@@ -171,7 +171,8 @@ class CiscoSwitch:
                         result["poe_status"] = self._get_poe_status(port)
 
                 result["system_mtu"]  = self._get_system_mtu()
-                result["system_logs"] = self._get_system_logs()
+                if options.system_logs:
+                    result["system_logs"] = self._get_system_logs()
 
                 # Uplink port error counters — checks health of links toward upstream devices
                 # (Ruckus switch errors are visible here on the Cisco side of that link)
@@ -274,8 +275,10 @@ class CiscoSwitch:
                 result["arp_table"] = self._get_arp_table()
                 result["version"] = self._get_version_summary()
             except Exception as e:
-                result["error"] = str(e)
-                logger.warning(f"[{self.name}] Neighbor collection failed: {e}")
+                # Use a generic message — raw exception text can include IPs, usernames,
+                # or partial credential context from Netmiko error strings.
+                result["error"] = "Connection failed — check server logs"
+                logger.warning("[%s] Neighbor collection failed: %s", self.name, type(e).__name__, exc_info=True)
             finally:
                 self._disconnect()
             return result

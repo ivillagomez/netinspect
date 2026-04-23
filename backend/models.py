@@ -39,6 +39,7 @@ class DiagnosticOptions(BaseModel):
     poe: bool = True
     neighbor_info: bool = True
     wireless_info: bool = True
+    system_logs: bool = True    # collect & display recent syslog entries per device
 
 
 class Issue(BaseModel):

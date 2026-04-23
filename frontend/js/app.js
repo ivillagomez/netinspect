@@ -147,7 +147,7 @@ function renderVendorBar(caps = {}) {
     return;
   }
   el.innerHTML = vendors.map(v =>
-    `<span class="vendor-chip vendor-chip--${v.group}">${v.label}</span>`
+    `<span class="vendor-chip vendor-chip--${esc(v.group)}">${esc(v.label)}</span>`
   ).join('');
 }
 
@@ -183,7 +183,7 @@ function toggleOptions() {
 }
 
 function updateOptionsLabel() {
-  const keys = ['interface_status', 'error_counters', 'mtu_check', 'stp', 'poe', 'neighbor_info'];
+  const keys = ['interface_status', 'error_counters', 'mtu_check', 'stp', 'poe', 'neighbor_info', 'system_logs'];
   const enabled = keys.filter(k => document.getElementById('opt_' + k)?.checked).length;
   const label = document.getElementById('optionsToggleLabel');
   label.textContent = enabled === keys.length
@@ -199,8 +199,23 @@ function getOptions() {
     stp:              !!document.getElementById('opt_stp')?.checked,
     poe:              !!document.getElementById('opt_poe')?.checked,
     neighbor_info:    !!document.getElementById('opt_neighbor_info')?.checked,
+    system_logs:      !!document.getElementById('opt_system_logs')?.checked,
     wireless_info:    true,
   };
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const isLight = html.getAttribute('data-theme') === 'light';
+  const next = isLight ? 'dark' : 'light';
+  if (next === 'light') {
+    html.setAttribute('data-theme', 'light');
+  } else {
+    html.removeAttribute('data-theme');
+  }
+  localStorage.setItem('netinspect_theme', next);
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.title = isLight ? 'Switch to light mode' : 'Switch to dark mode';
 }
 
 // ── Trace ─────────────────────────────────────────────────────
@@ -607,6 +622,29 @@ function buildHopCard(hop, idx) {
     ]));
   }
 
+  // Ruckus ICX switch — ingress port info from R1 API (speed / duplex / status)
+  if (hop.device_type === 'ruckus_switch' && hop.raw_data && hop.raw_data.r1_port_data) {
+    const p = hop.raw_data.r1_port_data;
+    // R1 uses various field names across firmware versions — try all known variants
+    const speed  = p.speed  ?? p.portSpeed  ?? p._raw?.speed  ?? p._raw?.portSpeed  ?? p._raw?.linkSpeed;
+    const duplex = p.duplex ?? p.portDuplex ?? p._raw?.duplex ?? p._raw?.portDuplex ?? p._raw?.linkDuplex;
+    const status = p.status || p.operStatus || p._raw?.operStatus || p._raw?.linkStatus || '';
+    const poeUsed    = p.poeUsed    ?? p._raw?.poeUsed;
+    const poeEnabled = p.poeEnabled ?? p._raw?.poeEnabled;
+    if (speed != null || duplex || status) {
+      const portLabel = p.portName || p.name || (hop.ingress_port || '');
+      body.innerHTML += `<div class="subsection-title">Port Info (R1)${portLabel ? ' — ' + esc(portLabel) : ''}</div>`;
+      const rows = [
+        ['Status', status || '–', statusColor(status)],
+        ['Speed',  speed  != null ? speed + ' Mbps' : '–'],
+        ['Duplex', duplex || '–', duplex && duplex.toLowerCase().includes('half') ? 'warn' : 'ok'],
+      ];
+      if (poeEnabled != null) rows.push(['PoE Enabled', poeEnabled ? 'Yes' : 'No']);
+      if (poeUsed   != null) rows.push(['PoE Used',    poeUsed + ' W']);
+      body.appendChild(buildDetailGrid(rows));
+    }
+  }
+
   // AP switch uplink — port status, errors and PoE sourced from the connecting Cisco port
   if (hop.device_type === 'ruckus_ap' && hop.raw_data && hop.raw_data.switch_port) {
     const rd = hop.raw_data;
@@ -683,23 +721,34 @@ function buildHopCard(hop, idx) {
   // FortiGate egress interface stats (from SSH)
   if (hop.device_type === 'firewall' && hop.raw_data && hop.raw_data.interface_stats) {
     const s = hop.raw_data.interface_stats;
-    if (Object.keys(s).filter(k => k !== 'lag_parent').length) {
+    const statKeys = Object.keys(s).filter(k => !['mtu', 'lag_parent'].includes(k));
+    if (statKeys.length || s.mtu) {
       // If the port is a LAG member, stats come from the parent aggregate interface
       const portLabel = s.lag_parent
         ? `${hop.egress_port || ''} → ${s.lag_parent} (LAG)`
         : (hop.egress_port || '');
       body.innerHTML += `<div class="subsection-title">Egress Interface (${esc(portLabel)})</div>`;
-      body.appendChild(buildDetailGrid([
-        ['RX Packets', s.rx_packets != null ? s.rx_packets.toLocaleString() : '–'],
-        ['TX Packets', s.tx_packets != null ? s.tx_packets.toLocaleString() : '–'],
-        ['RX Bytes',   s.rx_bytes   != null ? fmtBps(s.rx_bytes)  : '–'],
-        ['TX Bytes',   s.tx_bytes   != null ? fmtBps(s.tx_bytes)  : '–'],
-        ['RX Errors',  s.rx_errors  != null ? s.rx_errors  : '–', s.rx_errors  > 0 ? 'warn' : 'ok'],
-        ['TX Errors',  s.tx_errors  != null ? s.tx_errors  : '–', s.tx_errors  > 0 ? 'warn' : 'ok'],
-        ['RX Drops',   s.rx_drops   != null ? s.rx_drops   : '–', s.rx_drops   > 0 ? 'warn' : 'ok'],
-        ['TX Drops',   s.tx_drops   != null ? s.tx_drops   : '–', s.tx_drops   > 0 ? 'warn' : 'ok'],
-        ['MTU',        s.mtu ? s.mtu + ' bytes' : '–'],
-      ]));
+
+      // Detect software / zone interface (MTU present but all traffic counters are 0)
+      const allZero = statKeys.every(k => (s[k] ?? 0) === 0);
+      if (allZero && s.mtu) {
+        body.innerHTML += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
+          ℹ️ Software or zone interface — traffic counters not maintained by the OS.
+          ${s.mtu ? `MTU: ${s.mtu} bytes.` : ''}
+        </div>`;
+      } else {
+        body.appendChild(buildDetailGrid([
+          ['RX Packets', s.rx_packets != null ? s.rx_packets.toLocaleString() : '–'],
+          ['TX Packets', s.tx_packets != null ? s.tx_packets.toLocaleString() : '–'],
+          ['RX Bytes',   s.rx_bytes   != null ? fmtBps(s.rx_bytes)  : '–'],
+          ['TX Bytes',   s.tx_bytes   != null ? fmtBps(s.tx_bytes)  : '–'],
+          ['RX Errors',  s.rx_errors  != null ? s.rx_errors  : '–', s.rx_errors  > 0 ? 'warn' : 'ok'],
+          ['TX Errors',  s.tx_errors  != null ? s.tx_errors  : '–', s.tx_errors  > 0 ? 'warn' : 'ok'],
+          ['RX Drops',   s.rx_drops   != null ? s.rx_drops   : '–', s.rx_drops   > 0 ? 'warn' : 'ok'],
+          ['TX Drops',   s.tx_drops   != null ? s.tx_drops   : '–', s.tx_drops   > 0 ? 'warn' : 'ok'],
+          ['MTU',        s.mtu ? s.mtu + ' bytes' : '–'],
+        ]));
+      }
     }
   }
 

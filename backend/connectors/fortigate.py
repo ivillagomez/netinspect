@@ -23,6 +23,12 @@ class FortiGateClient:
         self.config = config
         self.base_url = f"https://{config.host}:{config.port}/api/v2"
         self._client: Optional[httpx.AsyncClient] = None
+        if not config.verify_ssl:
+            logger.warning(
+                "FortiGate SSL verification DISABLED for %s — "
+                "connections are not protected against MITM attacks on the LAN.",
+                config.host,
+            )
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:

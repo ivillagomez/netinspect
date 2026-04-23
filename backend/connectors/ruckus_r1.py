@@ -114,8 +114,6 @@ class RuckusR1Client:
                         continue        # POST again to Location
 
                     # Non-redirect response — evaluate
-                    logger.info("R1 token [%s]: HTTP %s url=%s — %s",
-                                style, r.status_code, url, r.text[:300])
                     if r.is_success:
                         data  = r.json()
                         token = data.get("access_token")
@@ -124,8 +122,12 @@ class RuckusR1Client:
                             self._token_expires_at = time.time() + expires_in - 60
                             logger.info("R1 token obtained via %s (url=%s, expires_in=%ds)",
                                         style, url, expires_in)
-                            return token, r.status_code, r.text[:200]
-                    # Non-success from a real endpoint — stop trying, report
+                            # Do NOT log or return the response body on success —
+                            # the body contains the JWT access token.
+                            return token, r.status_code, ""
+                    # Non-success — log body snippet (no token present in failure responses)
+                    logger.info("R1 token [%s]: HTTP %s url=%s — %s",
+                                style, r.status_code, url, r.text[:300])
                     return None, r.status_code, r.text[:300]
 
             except Exception as e:
@@ -388,7 +390,12 @@ class RuckusR1Client:
                 "name":     p.get("name") or p.get("portIdentifier") or "",
                 "portType": port_type,
                 "isUplink": is_uplink,
-                "status":   p.get("status", ""),
+                # Link state — R1 uses various field names across firmware versions
+                "status":    p.get("status") or p.get("operStatus") or p.get("linkStatus") or "",
+                "adminStatus": p.get("adminStatus") or p.get("admin") or "",
+                # Speed (Mbps) and duplex — normalise field name variants
+                "speed":  p.get("speed") or p.get("portSpeed") or p.get("linkSpeed"),
+                "duplex": p.get("duplex") or p.get("portDuplex") or p.get("linkDuplex"),
                 "neighborName": p.get("neighborName"),
                 "poeEnabled":   p.get("poeEnabled"),
                 "poeUsed":      p.get("poeUsed"),

@@ -75,11 +75,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# Designed for local/LAN deployment; restrict allow_origins to specific hosts if
-# exposed beyond the local network.
+# Default: allow all origins ("*") — safe for a trusted private LAN.
+# Set server.allowed_origins in config.yaml to lock down before exposing publicly.
+try:
+    _cors_origins: list = load_config().server.allowed_origins or ["*"]
+except Exception:
+    _cors_origins = ["*"]   # config not yet present at build time (Docker, CI)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["X-API-Key", "Content-Type"],
