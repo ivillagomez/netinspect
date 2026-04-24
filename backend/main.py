@@ -597,7 +597,9 @@ async def put_settings(request: Request):
     except FileNotFoundError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    reset_config()   # force reload on next request
+    reset_config()          # force reload on next request
+    global _tracer
+    _tracer = None          # force tracer rebuild so the next trace uses the new config
     logger.info("Config saved via /api/settings")
     return {"ok": True, "message": "Configuration saved. Changes take effect immediately."}
 

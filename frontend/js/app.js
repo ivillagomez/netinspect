@@ -73,6 +73,9 @@ const ICONS = {
   </svg>`,
 };
 
+// ── Module-level state ────────────────────────────────────────
+let _caps = {};   // last-known capabilities; updated by initUI()
+
 // ── Constants ─────────────────────────────────────────────────
 const VENDOR_PATH_META = {
   firewall:       { label: 'FortiGate',  color: 'var(--fw-color)'      },
@@ -197,6 +200,10 @@ function initEventHandlers() {
     ?.addEventListener('click', toggleHistory);
   document.getElementById('historyClearBtn')
     ?.addEventListener('click', clearHistory);
+
+  // ── No-config banner ──────────────────────────────────────
+  document.getElementById('noConfigHintBtn')
+    ?.addEventListener('click', openSettings);
 }
 
 async function initUI() {
@@ -211,6 +218,8 @@ async function initUI() {
     if (cfgRes.ok)  uiCfg  = await cfgRes.json();
   } catch (_) { /* server unreachable — show nothing */ }
 
+  _caps = caps;   // cache for later use (e.g. after settings save)
+
   // Update footer version label if served version is available
   if (uiCfg.version) {
     const vEl = document.getElementById('versionLabel');
@@ -219,6 +228,16 @@ async function initUI() {
 
   renderVendorBar(caps);
   updateSearchHints(caps);
+  _updateConfigBanner(caps);
+}
+
+// Show/hide the "No devices configured" warning below the search examples.
+// The banner is visible when none of the known capability flags are truthy.
+function _updateConfigBanner(caps = {}) {
+  const hint = document.getElementById('noConfigHint');
+  if (!hint) return;
+  const hasAny = Object.values(caps).some(Boolean);
+  hint.style.display = hasAny ? 'none' : '';
 }
 
 function renderVendorBar(caps = {}) {
