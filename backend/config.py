@@ -4,6 +4,15 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+class SwitchCredentials(BaseModel):
+    """Global SSH credentials shared across all switches (e.g. a TACACS service account).
+    Per-switch username / password override these when explicitly set."""
+    username: str = ""
+    password: str = ""
+    device_type: str = "cisco_ios"   # default Netmiko driver for new discovered switches
+    timeout: int = 30
+
+
 class FortiGateConfig(BaseModel):
     host: str
     port: int = 443
@@ -74,12 +83,13 @@ class ExtremeIQConfig(BaseModel):
 
 class AppConfig(BaseModel):
     # All sections are optional — only configure what you have
-    fortigate:      Optional[FortiGateConfig]    = None   # None = no firewall / switch-only mode
-    cisco_switches: List[CiscoSwitchConfig]      = []     # SSH-managed Cisco IOS/IOS-XE switches
-    aruba_switches: List[ArubaSwitchConfig]      = []     # SSH-managed Aruba AOS-S/CX switches
-    ruckus_r1:      Optional[RuckusR1Config]     = None   # Ruckus One cloud API
-    aruba_central:  Optional[ArubaCentralConfig] = None   # Aruba Central cloud API
-    extreme_iq:     Optional[ExtremeIQConfig]    = None   # ExtremeCloud IQ cloud API
+    fortigate:          Optional[FortiGateConfig]    = None   # None = no firewall / switch-only mode
+    switch_credentials: Optional[SwitchCredentials] = None   # shared TACACS / global SSH creds
+    cisco_switches:     List[CiscoSwitchConfig]      = []     # SSH-managed Cisco IOS/IOS-XE switches
+    aruba_switches:     List[ArubaSwitchConfig]      = []     # SSH-managed Aruba AOS-S/CX switches
+    ruckus_r1:          Optional[RuckusR1Config]     = None   # Ruckus One cloud API
+    aruba_central:      Optional[ArubaCentralConfig] = None   # Aruba Central cloud API
+    extreme_iq:         Optional[ExtremeIQConfig]    = None   # ExtremeCloud IQ cloud API
     server: ServerConfig = ServerConfig()
 
 
@@ -116,3 +126,37 @@ def get_config() -> AppConfig:
     if _config is None:
         return load_config()
     return _config
+
+
+def _find_config_path(path: str = "config.yaml") -> Optional[str]:
+    """Return the resolved path to config.yaml, or None if not found."""
+    env_path = os.environ.get("NETWORK_TRACER_CONFIG")
+    if env_path:
+        return env_path if os.path.isfile(env_path) else None
+    candidates = [path] if os.path.isabs(path) else [
+        os.path.join(os.getcwd(), path),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), path),
+        os.path.join("/app", path),
+    ]
+    return next((p for p in candidates if os.path.isfile(p)), None)
+
+
+def save_config(cfg: AppConfig, path: str = "config.yaml") -> None:
+    """Persist an AppConfig back to the YAML file it was loaded from."""
+    config_path = _find_config_path(path)
+    if not config_path:
+        raise FileNotFoundError(
+            "config.yaml not found — cannot save. "
+            "Ensure the file exists at the project root."
+        )
+    # Exclude None optional sections so the YAML stays clean
+    data = cfg.model_dump(exclude_none=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
+                  sort_keys=False)
+
+
+def reset_config() -> None:
+    """Clear the cached singleton. Next call to load_config() re-reads from disk."""
+    global _config
+    _config = None

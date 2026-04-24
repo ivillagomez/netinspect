@@ -236,6 +236,290 @@ function _syncThemeButton() {
   // icon visibility is handled by CSS [data-theme="light"] rules
 }
 
+// ── Settings modal ────────────────────────────────────────────
+const _MASKED = '••••••••';
+let _settingsData = null;   // last-fetched config from server
+
+function toggleSettingsSection(hd) {
+  hd.classList.toggle('open');
+  const bd = hd.nextElementSibling;
+  bd.classList.toggle('open');
+}
+
+function openSettings() {
+  document.getElementById('settingsOverlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  _loadSettings();
+}
+
+function closeSettings() {
+  document.getElementById('settingsOverlay').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+function closeSettingsOnBackdrop(e) {
+  if (e.target === document.getElementById('settingsOverlay')) closeSettings();
+}
+
+async function _loadSettings() {
+  const msg = document.getElementById('settingsSaveMsg');
+  msg.className = 'settings-save-msg hidden';
+
+  try {
+    const res = await apiFetch('/api/settings');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _settingsData = await res.json();
+    _populateSettings(_settingsData);
+  } catch(e) {
+    msg.textContent = 'Could not load settings: ' + e.message;
+    msg.className = 'settings-save-msg err';
+  }
+}
+
+function _populateSettings(d) {
+  // ── Global switch credentials ──────────────────────────────
+  const sc = d.switch_credentials || {};
+  _setVal('cfg_sw_username',    sc.username    || '');
+  _setVal('cfg_sw_password',    sc.password    || '');
+  _setVal('cfg_sw_device_type', sc.device_type || 'cisco_ios');
+
+  // ── Cisco switches ─────────────────────────────────────────
+  _renderSwitchList('cisco', d.cisco_switches || []);
+
+  // ── Aruba switches ─────────────────────────────────────────
+  _renderSwitchList('aruba', d.aruba_switches || []);
+
+  // ── FortiGate ──────────────────────────────────────────────
+  const fg = d.fortigate || {};
+  _setVal('cfg_fg_host',     fg.host          || '');
+  _setVal('cfg_fg_port',     fg.port          || 443);
+  _setVal('cfg_fg_token',    fg.access_token  || '');
+  _setVal('cfg_fg_ssl',      fg.verify_ssl === false ? 'false' : 'true');
+  _setVal('cfg_fg_ssh_user', fg.ssh_username  || '');
+  _setVal('cfg_fg_ssh_pass', fg.ssh_password  || '');
+  _setVal('cfg_fg_ssh_port', fg.ssh_port      || 22);
+
+  // ── Ruckus One ─────────────────────────────────────────────
+  const r1 = d.ruckus_r1 || {};
+  _setVal('cfg_r1_url',           r1.base_url      || '');
+  _setVal('cfg_r1_tenant',        r1.tenant_id     || '');
+  _setVal('cfg_r1_client_id',     r1.client_id     || '');
+  _setVal('cfg_r1_client_secret', r1.client_secret || '');
+
+  // ── Aruba Central ──────────────────────────────────────────
+  const ac = d.aruba_central || {};
+  _setVal('cfg_ac_url',           ac.base_url      || '');
+  _setVal('cfg_ac_customer_id',   ac.customer_id   || '');
+  _setVal('cfg_ac_client_id',     ac.client_id     || '');
+  _setVal('cfg_ac_client_secret', ac.client_secret || '');
+
+  // ── ExtremeCloud IQ ────────────────────────────────────────
+  const xiq = d.extreme_iq || {};
+  _setVal('cfg_xiq_url',     xiq.base_url || '');
+  _setVal('cfg_xiq_api_key', xiq.api_key  || '');
+
+  // ── Server ─────────────────────────────────────────────────
+  const srv = d.server || {};
+  _setVal('cfg_srv_host',    srv.host    || '0.0.0.0');
+  _setVal('cfg_srv_port',    srv.port    || 8080);
+  _setVal('cfg_srv_api_key', srv.api_key || '');
+  _setVal('cfg_srv_origins', (srv.allowed_origins || []).join(', '));
+}
+
+function _setVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
+}
+
+// ── Switch list rendering ──────────────────────────────────────
+function _renderSwitchList(type, switches) {
+  const container = document.getElementById(type + '_switches_list');
+  if (!container) return;
+  container.innerHTML = '';
+  switches.forEach((sw, i) => _appendSwitchRow(type, sw, i));
+}
+
+function _appendSwitchRow(type, sw = {}, idx) {
+  const container = document.getElementById(type + '_switches_list');
+  const isAruba = type === 'aruba';
+  const driverOpts = isAruba
+    ? `<option value="aruba_os"${sw.os_type === 'aruba_os' || !sw.os_type ? ' selected' : ''}>aruba_os</option>
+       <option value="aruba_osix"${sw.os_type === 'aruba_osix' ? ' selected' : ''}>aruba_osix</option>`
+    : `<option value="cisco_ios"${sw.device_type === 'cisco_ios' || !sw.device_type ? ' selected' : ''}>cisco_ios</option>
+       <option value="cisco_xe"${sw.device_type === 'cisco_xe' ? ' selected' : ''}>cisco_xe</option>`;
+  const driverKey = isAruba ? 'os_type' : 'device_type';
+
+  const row = document.createElement('div');
+  row.className = 'settings-switch-row';
+  row.dataset.swtype = type;
+  row.innerHTML = `
+    <div class="settings-field"><label>Name</label>
+      <input type="text" class="sw-name" value="${esc(sw.name || '')}" placeholder="core-sw-01" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="settings-field"><label>Host / IP</label>
+      <input type="text" class="sw-host" value="${esc(sw.host || '')}" placeholder="192.168.1.10" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="settings-field settings-field--sm"><label>Username <span style="opacity:.5">(override)</span></label>
+      <input type="text" class="sw-username" value="${esc(sw.username || '')}" placeholder="from global" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="settings-field settings-field--sm"><label>Password <span style="opacity:.5">(override)</span></label>
+      <input type="password" class="sw-password" value="${esc(sw.password || '')}" placeholder="from global" autocomplete="new-password">
+    </div>
+    <div class="settings-field settings-field--sm"><label>Driver</label>
+      <select class="sw-driver">${driverOpts}</select>
+    </div>
+    ${!isAruba ? `<div class="settings-field settings-field--sm"><label>SNMP community</label>
+      <input type="text" class="sw-snmp" value="${esc(sw.snmp_community || '')}" placeholder="public" autocomplete="off" spellcheck="false">
+    </div>` : ''}
+    <button class="settings-switch-remove" onclick="removeSwitchRow(this)" title="Remove">✕</button>
+  `;
+  container.appendChild(row);
+}
+
+function addSwitchRow(type) {
+  _appendSwitchRow(type, {});
+}
+
+function removeSwitchRow(btn) {
+  btn.closest('.settings-switch-row').remove();
+}
+
+// ── Collect + save ─────────────────────────────────────────────
+async function saveSettings() {
+  const btn = document.getElementById('settingsSaveBtn');
+  const msg = document.getElementById('settingsSaveMsg');
+  btn.disabled = true;
+  msg.className = 'settings-save-msg hidden';
+
+  try {
+    const body = _collectSettings();
+    const res = await apiFetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    msg.textContent = '✓ ' + data.message;
+    msg.className = 'settings-save-msg ok';
+    // Refresh capabilities bar since config changed
+    initUI();
+  } catch(e) {
+    msg.textContent = '✗ ' + e.message;
+    msg.className = 'settings-save-msg err';
+  } finally {
+    btn.disabled = false;
+    // Scroll to message
+    document.getElementById('settingsSaveMsg').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+function _collectSettings() {
+  const v = id => document.getElementById(id)?.value.trim() || '';
+
+  // ── Global switch credentials ──────────────────────────────
+  const swUser = v('cfg_sw_username');
+  const swPass = v('cfg_sw_password');
+  const switch_credentials = (swUser || swPass) ? {
+    username:    swUser,
+    password:    swPass || _MASKED,   // keep existing if blank
+    device_type: v('cfg_sw_device_type') || 'cisco_ios',
+    timeout: 30,
+  } : null;
+
+  // ── Switch helper ──────────────────────────────────────────
+  const collectSwitches = (type) => {
+    const isAruba = type === 'aruba';
+    return Array.from(
+      document.querySelectorAll(`#${type}_switches_list .settings-switch-row`)
+    ).map(row => {
+      const get = cls => row.querySelector(cls)?.value.trim() || '';
+      const name = get('.sw-name');
+      const host = get('.sw-host');
+      if (!name && !host) return null;   // skip empty rows
+      const entry = {
+        name,
+        host,
+        username: get('.sw-username') || undefined,
+        password: get('.sw-password') || _MASKED,
+        timeout: 30,
+      };
+      if (isAruba) {
+        entry.os_type = get('.sw-driver') || 'aruba_os';
+      } else {
+        entry.device_type  = get('.sw-driver') || 'cisco_ios';
+        const snmp = get('.sw-snmp');
+        if (snmp) entry.snmp_community = snmp;
+      }
+      // Strip undefined fields
+      Object.keys(entry).forEach(k => entry[k] === undefined && delete entry[k]);
+      return entry;
+    }).filter(Boolean);
+  };
+
+  // ── FortiGate ──────────────────────────────────────────────
+  const fgHost = v('cfg_fg_host');
+  const fortigate = fgHost ? {
+    host:         fgHost,
+    port:         parseInt(v('cfg_fg_port')) || 443,
+    access_token: v('cfg_fg_token') || _MASKED,
+    verify_ssl:   document.getElementById('cfg_fg_ssl')?.value !== 'false',
+    ssh_username: v('cfg_fg_ssh_user') || undefined,
+    ssh_password: v('cfg_fg_ssh_pass') || _MASKED,
+    ssh_port:     parseInt(v('cfg_fg_ssh_port')) || 22,
+  } : null;
+  if (fortigate) Object.keys(fortigate).forEach(k => fortigate[k] === undefined && delete fortigate[k]);
+
+  // ── Ruckus One ─────────────────────────────────────────────
+  const r1Url = v('cfg_r1_url');
+  const ruckus_r1 = r1Url ? {
+    base_url:      r1Url,
+    tenant_id:     v('cfg_r1_tenant')        || undefined,
+    client_id:     v('cfg_r1_client_id')     || undefined,
+    client_secret: v('cfg_r1_client_secret') || _MASKED,
+  } : null;
+  if (ruckus_r1) Object.keys(ruckus_r1).forEach(k => ruckus_r1[k] === undefined && delete ruckus_r1[k]);
+
+  // ── Aruba Central ──────────────────────────────────────────
+  const acClientId = v('cfg_ac_client_id');
+  const aruba_central = acClientId ? {
+    base_url:      v('cfg_ac_url') || 'https://apigw-prod2.central.arubanetworks.com',
+    customer_id:   v('cfg_ac_customer_id'),
+    client_id:     acClientId,
+    client_secret: v('cfg_ac_client_secret') || _MASKED,
+  } : null;
+
+  // ── ExtremeCloud IQ ────────────────────────────────────────
+  const xiqUrl = v('cfg_xiq_url');
+  const extreme_iq = xiqUrl ? {
+    base_url: xiqUrl,
+    api_key:  v('cfg_xiq_api_key') || _MASKED,
+  } : null;
+
+  // ── Server ─────────────────────────────────────────────────
+  const originsRaw = v('cfg_srv_origins');
+  const allowed_origins = originsRaw
+    ? originsRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  const server = {
+    host:            v('cfg_srv_host') || '0.0.0.0',
+    port:            parseInt(v('cfg_srv_port')) || 8080,
+    api_key:         v('cfg_srv_api_key') || _MASKED,
+    allowed_origins,
+  };
+
+  return {
+    switch_credentials,
+    cisco_switches: collectSwitches('cisco'),
+    aruba_switches: collectSwitches('aruba'),
+    fortigate,
+    ruckus_r1,
+    aruba_central,
+    extreme_iq,
+    server,
+  };
+}
+
 // ── Trace ─────────────────────────────────────────────────────
 async function doTrace() {
   const query = document.getElementById('searchInput').value.trim();

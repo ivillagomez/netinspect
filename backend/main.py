@@ -9,9 +9,36 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.config import load_config
+from backend.config import (
+    load_config, save_config, reset_config,
+    AppConfig, FortiGateConfig, CiscoSwitchConfig, ArubaSwitchConfig,
+    RuckusR1Config, ArubaCentralConfig, ExtremeIQConfig,
+    ServerConfig, SwitchCredentials,
+)
 from backend.models import TraceRequest, TraceResult
 from backend.tracer.mac_tracer import NetworkTracer
+
+# ── Settings helpers ───────────────────────────────────────────────────────────
+
+_MASKED = "••••••••"   # placeholder returned by GET /api/settings for set secrets
+
+
+def _mask(val) -> str | None:
+    """Return the mask sentinel if val is set, else None."""
+    return _MASKED if val else None
+
+
+def _merge_secret(submitted, current):
+    """Resolve a secret field coming from PUT /api/settings.
+    - If user sent back the mask  → keep current (unchanged)
+    - If user sent empty / None   → clear (delete)
+    - Otherwise                   → use the new value
+    """
+    if submitted == _MASKED:
+        return current
+    if not submitted:
+        return None
+    return submitted
 
 logging.basicConfig(
     level=logging.INFO,
@@ -242,6 +269,142 @@ def _read_version() -> str:
             except Exception:
                 pass
     return "unknown"
+
+
+@app.get("/api/settings", dependencies=[Depends(verify_api_key)])
+async def get_settings():
+    """Return current config with all secrets masked. Safe to show in the UI."""
+    cfg = load_config()
+    d = cfg.model_dump()
+
+    # ── FortiGate ──────────────────────────────────────────────────────────────
+    if d.get("fortigate"):
+        d["fortigate"]["access_token"] = _mask(cfg.fortigate.access_token)
+        d["fortigate"]["ssh_password"]  = _mask(cfg.fortigate.ssh_password)
+
+    # ── Global switch credentials ──────────────────────────────────────────────
+    if d.get("switch_credentials") and d["switch_credentials"].get("password"):
+        d["switch_credentials"]["password"] = _MASKED
+
+    # ── Cisco switches ─────────────────────────────────────────────────────────
+    for sw in d.get("cisco_switches", []):
+        if sw.get("password"):
+            sw["password"] = _MASKED
+
+    # ── Aruba switches ─────────────────────────────────────────────────────────
+    for sw in d.get("aruba_switches", []):
+        if sw.get("password"):
+            sw["password"] = _MASKED
+
+    # ── Cloud: Ruckus One ──────────────────────────────────────────────────────
+    if d.get("ruckus_r1"):
+        r1 = cfg.ruckus_r1
+        d["ruckus_r1"]["client_secret"] = _mask(r1.client_secret)
+        d["ruckus_r1"]["api_key"]        = _mask(r1.api_key)
+
+    # ── Cloud: Aruba Central ───────────────────────────────────────────────────
+    if d.get("aruba_central"):
+        d["aruba_central"]["client_secret"] = _mask(cfg.aruba_central.client_secret)
+
+    # ── Cloud: ExtremeCloud IQ ─────────────────────────────────────────────────
+    if d.get("extreme_iq"):
+        xiq = cfg.extreme_iq
+        d["extreme_iq"]["api_key"]       = _mask(xiq.api_key)
+        d["extreme_iq"]["client_secret"] = _mask(xiq.client_secret)
+
+    # ── Server ─────────────────────────────────────────────────────────────────
+    if d.get("server", {}).get("api_key"):
+        d["server"]["api_key"] = _MASKED
+
+    return d
+
+
+@app.put("/api/settings", dependencies=[Depends(verify_api_key)])
+async def put_settings(request: Request):
+    """Save updated config. Fields set to the mask sentinel are preserved from disk."""
+    body = await request.json()
+    current = load_config()
+
+    # ── FortiGate ──────────────────────────────────────────────────────────────
+    fg_body = body.get("fortigate")
+    if fg_body:
+        cur_fg = current.fortigate
+        fg_body["access_token"] = _merge_secret(
+            fg_body.get("access_token"), cur_fg.access_token if cur_fg else None)
+        fg_body["ssh_password"] = _merge_secret(
+            fg_body.get("ssh_password"), cur_fg.ssh_password if cur_fg else None)
+    elif "fortigate" in body and fg_body is None:
+        pass   # explicit null → remove section
+
+    # ── Global switch credentials ──────────────────────────────────────────────
+    sw_creds_body = body.get("switch_credentials")
+    if sw_creds_body:
+        cur_sc = current.switch_credentials
+        sw_creds_body["password"] = _merge_secret(
+            sw_creds_body.get("password"), cur_sc.password if cur_sc else None)
+
+    # ── Cisco switches ─────────────────────────────────────────────────────────
+    cur_cisco = {sw.name: sw for sw in current.cisco_switches}
+    for sw in body.get("cisco_switches", []):
+        cur = cur_cisco.get(sw.get("name"))
+        sw["password"] = _merge_secret(sw.get("password"), cur.password if cur else None)
+        # Fill username from global creds if blank
+        if not sw.get("username") and sw_creds_body:
+            sw["username"] = sw_creds_body.get("username", "")
+
+    # ── Aruba switches ─────────────────────────────────────────────────────────
+    cur_aruba = {sw.name: sw for sw in current.aruba_switches}
+    for sw in body.get("aruba_switches", []):
+        cur = cur_aruba.get(sw.get("name"))
+        sw["password"] = _merge_secret(sw.get("password"), cur.password if cur else None)
+        if not sw.get("username") and sw_creds_body:
+            sw["username"] = sw_creds_body.get("username", "")
+
+    # ── Cloud: Ruckus One ──────────────────────────────────────────────────────
+    r1_body = body.get("ruckus_r1")
+    if r1_body:
+        cur_r1 = current.ruckus_r1
+        r1_body["client_secret"] = _merge_secret(
+            r1_body.get("client_secret"), cur_r1.client_secret if cur_r1 else None)
+        r1_body["api_key"] = _merge_secret(
+            r1_body.get("api_key"), cur_r1.api_key if cur_r1 else None)
+
+    # ── Cloud: Aruba Central ───────────────────────────────────────────────────
+    ac_body = body.get("aruba_central")
+    if ac_body:
+        cur_ac = current.aruba_central
+        ac_body["client_secret"] = _merge_secret(
+            ac_body.get("client_secret"), cur_ac.client_secret if cur_ac else None)
+
+    # ── Cloud: ExtremeCloud IQ ─────────────────────────────────────────────────
+    xiq_body = body.get("extreme_iq")
+    if xiq_body:
+        cur_xiq = current.extreme_iq
+        xiq_body["api_key"] = _merge_secret(
+            xiq_body.get("api_key"), cur_xiq.api_key if cur_xiq else None)
+        xiq_body["client_secret"] = _merge_secret(
+            xiq_body.get("client_secret"), cur_xiq.client_secret if cur_xiq else None)
+
+    # ── Server ─────────────────────────────────────────────────────────────────
+    srv_body = body.get("server", {})
+    srv_body["api_key"] = _merge_secret(
+        srv_body.get("api_key"), current.server.api_key)
+    body["server"] = srv_body
+
+    # ── Validate + save ────────────────────────────────────────────────────────
+    try:
+        new_cfg = AppConfig(**body)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid config: {e}")
+
+    try:
+        save_config(new_cfg)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    reset_config()   # force reload on next request
+    logger.info("Config saved via /api/settings")
+    return {"ok": True, "message": "Configuration saved. Changes take effect immediately."}
 
 
 @app.get("/api/ui-config")
