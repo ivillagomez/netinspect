@@ -861,6 +861,7 @@ body {
 /* scrollable body */
 .settings-body {
   flex: 1;
+  min-height: 0;        /* allow overflow-y: auto to work inside a flex column */
   overflow-y: auto;
   padding: 16px 22px;
   display: flex;
@@ -873,6 +874,7 @@ body {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   overflow: hidden;
+  flex-shrink: 0;       /* prevent sections from shrinking and clipping expanded content */
 }
 .settings-section-hd {
   display: flex;
