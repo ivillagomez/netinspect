@@ -771,6 +771,41 @@ The discovery engine walks CDP neighbors first, falls back to LLDP, and skips ac
 - Data source indicator (SSH / RESTCONF / REST API) per hop
 - Ruckus AP wired uplink shown as ETH0 when no explicit port is returned
 
+### Export CSV
+
+After a trace completes, click **Export CSV** in the export bar (below the summary bar) to download a spreadsheet.
+
+The CSV contains:
+- **One row per hop** — device name, type, IP, vendor, model, software version, VLAN, ingress/egress ports, reachable status, semicolon-joined issues, and per-hop test pass/fail/warning counts
+- **Issues appendix** — all issues from the trace listed with severity, device, message, and detail
+
+The file is saved as `netinspect_<query>_<timestamp>.csv` with a UTF-8 BOM so Excel opens it without an import wizard.
+
+### Print / PDF
+
+Click **Print / PDF** in the export bar to open the browser print dialog. Choose **Save as PDF** to produce a report file.
+
+The print stylesheet:
+- Removes the header, search bar, footer, and history panel
+- Shows a report header with query, MAC, IP, and timestamp
+- Forces all hop detail cards open
+- Applies white background with print-safe colours for issues, badges, and test results
+- Preserves page-break rules to keep hop cards intact across pages
+
+Chrome's "Save as PDF" produces the cleanest output.
+
+### Trace history
+
+The **Recent Traces** panel appears above the results after your first trace. It stores up to 20 traces in `localStorage` — no server required.
+
+| Control | Action |
+|---|---|
+| Click panel header | Expand / collapse the list |
+| **↩ Load** | Re-render a past trace instantly (no network query) |
+| **Clear** | Remove all stored history |
+
+Each entry shows a status icon (✅ / ⚠️ / 🔴 / 🔍), the original query, hop count, resolved IP and MAC, and the timestamp. History persists across browser sessions and is local to the browser — not shared across LAN users.
+
 ### Dark/light theme
 
 Click the **sun/moon button in the footer** to toggle between dark and light themes. The selected theme persists across sessions via `localStorage`.
@@ -1142,8 +1177,10 @@ No inbound ports are needed other than `8080` for the web UI.
 | Rate limiting (30/min trace, 10/min discover, per IP, sliding window) | ✅ Done |
 | IP input validation + request body size limit (SSRF / DoS prevention) | ✅ Done |
 | Config file permission warning at startup | ✅ Done |
-| Export trace to PDF / CSV | Planned |
-| Saved trace history / comparison | Planned |
+| Export trace to CSV (client-side, per-hop rows + issues appendix) | ✅ Done |
+| Print / PDF via browser print stylesheet (all hop cards forced open, print-safe colours) | ✅ Done |
+| Trace history (localStorage, up to 20 entries, instant reload, persists across sessions) | ✅ Done |
+| Saved trace history — comparison / diff between two traces | Planned |
 | FortiAnalyzer log correlation | Planned |
 | Email / Teams alert on critical issues | Planned |
 | Palo Alto firewall support | Planned |
