@@ -56,11 +56,20 @@ All integrations are optional. Configure only the ones relevant to your environm
 | Integration | Type | Protocol | Config Key |
 |---|---|---|---|
 | FortiGate firewall | Firewall | HTTPS REST + SSH | `fortigate` |
-| Cisco switches (IOS / IOS-XE / NX-OS) | Wired switch | SSH | `cisco_switches` |
-| Aruba switches (AOS-S / AOS-CX) | Wired switch | SSH | `aruba_switches` |
+| Cisco switches (IOS / IOS-XE / NX-OS) | Wired switch | SSH + SNMP (optional) + RESTCONF (optional) | `cisco_switches` |
+| Aruba switches (AOS-S / AOS-CX) | Wired switch | SSH + REST API (optional) | `aruba_switches` |
 | Ruckus One (R1) | Wireless cloud | HTTPS REST (OAuth2) | `ruckus_r1` |
 | Aruba Central | Wireless + wired cloud | HTTPS REST (OAuth2) | `aruba_central` |
 | ExtremeCloud IQ | Wireless cloud | HTTPS REST | `extreme_iq` |
+
+### Connection Methods per Switch
+
+| Method | Applies to | How to enable | What it provides |
+|---|---|---|---|
+| **SSH** | Cisco, Aruba | Always on (credentials required) | MAC table, CDP/LLDP, ARP, STP, PoE, system logs, interface stats |
+| **SNMP** | Cisco only | `snmp_community` field | Faster MAC table + IF-MIB stats, runs concurrently with SSH |
+| **RESTCONF** | Cisco IOS-XE 16.6+ | `restconf_enabled: true` | MAC table, ARP, CDP/LLDP, interface stats — runs concurrently with SSH; results take precedence |
+| **AOS-CX REST API** | Aruba 6000/6100 | `rest_enabled: true` | MAC table, ARP, LLDP, interface stats — runs concurrently with SSH; results take precedence |
 
 ---
 
@@ -86,8 +95,8 @@ flowchart TD
     H --> L([Query all configured sources in parallel])
 
     L --> M[FortiGate REST + SSH\nARP entry, interface, platform info\negress port error counters\nLAG member detection]
-    L --> N[Cisco SSH — all switches\nMAC table, CDP/LLDP, ARP\ninterface stats, STP, PoE]
-    L --> O[Aruba SSH — all switches\nMAC table, ARP\ninterface stats]
+    L --> N[Cisco SSH + RESTCONF\nMAC table, CDP/LLDP, ARP\ninterface stats, STP, PoE\nRESTCONF results take precedence]
+    L --> O[Aruba SSH + REST API\nMAC table, ARP\ninterface stats\nREST results take precedence]
     L --> P[Ruckus R1 Cloud API\nWireless clients, APs, Switches\nswitch port topology]
     L --> Q[Aruba Central Cloud API\nWired + wireless client lookup]
     L --> R[ExtremeCloud IQ Cloud API\nClient lookup]
@@ -123,16 +132,20 @@ flowchart LR
         API[FastAPI Backend\nPython 3.11\nPort 8080]
         DISC[Discovery Engine\nbackend/discovery/\nCDP/LLDP BFS walk]
         SAPI[Settings API\nGET/PUT /api/settings\nRead-write config.yaml]
+        POOL[SSH Connection Pool\nThread-safe Netmiko reuse\nMax 2 per switch, 300s idle]
         FE <-->|Same process| API
         API --- DISC
         API --- SAPI
+        API --- POOL
     end
 
     subgraph Connectors["Connectors (all optional)"]
         FGC[FortiGate REST\nHTTPS — ARP, interfaces, addresses]
         FGSSH[FortiGate SSH\nNetmiko — platform info, port stats, LAG]
         CISCO[Cisco SSH\nNetmiko — MAC table, CDP/LLDP, diagnostics]
+        CISCORC[Cisco RESTCONF\nHTTPS YANG — MAC, ARP, CDP, LLDP, interfaces]
         ARUBA[Aruba SSH\nNetmiko — AOS-S and AOS-CX]
+        ARUBARC[Aruba CX REST\nHTTPS — MAC, ARP, LLDP, interfaces]
         R1C[Ruckus R1 REST\nHTTPS — APs, switches, clients]
         AC[Aruba Central REST\nHTTPS — wired + wireless clients]
         XIQ[ExtremeCloud IQ REST\nHTTPS — client lookup]
@@ -151,11 +164,13 @@ flowchart LR
 
     U1 & U2 & U3 -->|HTTP| FE
     API --> FGC & FGSSH --> FG
-    API --> CISCO --> SW1 & SW2
-    API --> ARUBA --> ARSW
+    API --> CISCO & CISCORC --> SW1 & SW2
+    API --> ARUBA & ARUBARC --> ARSW
     API --> R1C --> R1 --> APS
     API --> AC --> ACN
     API --> XIQ --> XIQN
+    POOL -.->|reuses| CISCO
+    POOL -.->|reuses| ARUBA
 ```
 
 ---
@@ -169,6 +184,7 @@ sequenceDiagram
     participant API as FastAPI Backend
     participant FG as FortiGate (optional)
     participant SW as Switches — Cisco and/or Aruba (SSH)
+    participant RC as RESTCONF / REST API (optional)
     participant R1 as Ruckus R1 API (optional)
     participant AC as Aruba Central (optional)
     participant XIQ as ExtremeCloud IQ (optional)
@@ -199,10 +215,18 @@ sequenceDiagram
         API->>SW: show spanning-tree interface, show power inline
         API->>SW: show system mtu, show etherchannel summary
         SW-->>API: All diagnostics
+    and Cisco RESTCONF (if restconf_enabled)
+        API->>RC: GET /ietf-interfaces / Cisco-IOS-XE-native YANG paths
+        RC-->>API: MAC table, ARP, CDP, LLDP, interface stats
+        note over API: RESTCONF results override SSH data
     and Aruba SSH (all switches simultaneously, if configured)
         API->>SW: show mac-address (AOS-S) or show mac-address-table (AOS-CX)
         API->>SW: show arp, show interfaces
         SW-->>API: MAC table, ARP entries, interface stats
+    and Aruba CX REST API (if rest_enabled)
+        API->>RC: GET /rest/v10.10/system/vlans/{id}/macs
+        RC-->>API: MAC table, ARP, LLDP neighbors, interface stats
+        note over API: REST results override SSH data
     and Ruckus R1 (if configured)
         API->>R1: POST /venues/aps/clients/query (MAC lookup)
         API->>R1: POST /venues/switches/clients/query (switch port)
@@ -427,6 +451,8 @@ All top-level sections except `server` are optional. The tool will start and fun
 # ── Global Switch Credentials (optional) ─────────────────────────────────────
 # Shared TACACS username/password used by all SSH switches that do not have
 # their own username/password set. Omit per-switch credentials to inherit these.
+# These credentials are also propagated to RESTCONF and Aruba CX REST API fields
+# when those are enabled and no dedicated REST credentials are set.
 switch_credentials:
   username: "svc-netinspect"
   password: "YOUR_TACACS_PASSWORD"
@@ -446,25 +472,39 @@ fortigate:
   ssh_port: 22
 
 # ── Cisco Switches (optional) ─────────────────────────────────────────────────
-# username/password are optional per switch — omit to use switch_credentials
+# username/password are optional per switch — omit to use switch_credentials.
+# restconf_* fields enable the RESTCONF fast-path for IOS-XE 16.6+ switches.
 cisco_switches:
   - name: "SW-Core"
     host: "192.168.1.x"
-    # username: "YOUR_SSH_USERNAME"   # omit to inherit from switch_credentials
-    # password: "YOUR_SSH_PASSWORD"   # omit to inherit from switch_credentials
+    # username: "YOUR_SSH_USERNAME"       # omit to inherit from switch_credentials
+    # password: "YOUR_SSH_PASSWORD"       # omit to inherit from switch_credentials
     device_type: "cisco_ios"
     timeout: 30
-    # snmp_community: "public"   # optional SNMP fast-path
+    # snmp_community: "public"            # optional SNMP fast-path (MAC + IF-MIB stats)
+    # snmp_port: 161
+    # snmp_version: "2c"
+    # restconf_enabled: true              # enable RESTCONF for IOS-XE 16.6+ (parallel with SSH)
+    # restconf_port: 443                  # default: 443
+    # restconf_verify_ssl: false          # set false for self-signed certs
+    # restconf_username: ""               # omit to use switch_credentials username
+    # restconf_password: ""               # omit to use switch_credentials password
 
 # ── Aruba Switches (optional) ─────────────────────────────────────────────────
-# username/password are optional per switch — omit to use switch_credentials
+# username/password are optional per switch — omit to use switch_credentials.
+# rest_* fields enable the AOS-CX REST API for 6000/6100 series switches.
 aruba_switches:
   - name: "Aruba-Core"
     host: "192.168.1.x"
-    # username: "YOUR_SSH_USERNAME"   # omit to inherit from switch_credentials
-    # password: "YOUR_SSH_PASSWORD"   # omit to inherit from switch_credentials
+    # username: "YOUR_SSH_USERNAME"       # omit to inherit from switch_credentials
+    # password: "YOUR_SSH_PASSWORD"       # omit to inherit from switch_credentials
     os_type: "aruba_os"     # "aruba_os" (2930/2930F/2930M) or "aruba_osix" (6000/6100)
     timeout: 30
+    # rest_enabled: true                  # enable AOS-CX REST API (parallel with SSH)
+    # rest_port: 443                      # default: 443
+    # rest_verify_ssl: false              # set false for self-signed certs
+    # rest_username: ""                   # omit to use switch_credentials username
+    # rest_password: ""                   # omit to use switch_credentials password
 
 # ── Ruckus One (optional) ─────────────────────────────────────────────────────
 ruckus_r1:
@@ -499,6 +539,8 @@ server:
 
 The `switch_credentials` section defines a single TACACS username and password shared across all SSH switches. Any switch in `cisco_switches` or `aruba_switches` that does **not** have its own `username` and `password` fields set will use these credentials at runtime.
 
+When RESTCONF or AOS-CX REST API are enabled without dedicated `restconf_username`/`rest_username` fields, the global `switch_credentials` username and password are also used for those HTTP API connections automatically.
+
 Per-switch `username` and `password` fields are optional. When set, they take priority over `switch_credentials`. When omitted, they are never written into the switch entry — the global fallback is applied at connection time.
 
 This is the recommended pattern when all switches share a single TACACS service account.
@@ -532,6 +574,49 @@ cisco_switches:
     snmp_port: 161              # default: 161
     snmp_version: "2c"          # "1" or "2c"
 ```
+
+### Cisco RESTCONF fast-path (optional)
+
+RESTCONF provides a REST-based alternative to SSH for IOS-XE 16.6+ switches. When `restconf_enabled: true` is set, RESTCONF queries run **in parallel with SSH** for every trace. RESTCONF results take precedence over SSH data for: hostname, software version, MAC table, ARP table, CDP/LLDP neighbors, interface status, and interface counters. SSH still runs to provide STP, PoE, system MTU, etherchannel, and system log data.
+
+```yaml
+cisco_switches:
+  - name: "SW-Core-XE"
+    host: "192.168.1.x"
+    device_type: "cisco_xe"
+    timeout: 30
+    restconf_enabled: true
+    restconf_port: 443
+    restconf_verify_ssl: false     # required for self-signed certificates
+    # restconf_username/password — omit to inherit from switch_credentials
+```
+
+**Requirements:**
+- IOS-XE 16.6 or later
+- RESTCONF enabled on the switch: `restconf` global config command
+- HTTP authentication matching the SSH service account (or a dedicated REST-only account)
+- HTTPS reachable from the server (port 443 by default)
+
+### Aruba CX REST API (optional)
+
+The AOS-CX REST API provides a more reliable alternative to SSH parsing for 6000/6100 series switches. When `rest_enabled: true` is set, REST queries run **in parallel with SSH** for every trace. REST results take precedence for: hostname, MAC table, ARP table, LLDP neighbors, interface status, and interface counters.
+
+```yaml
+aruba_switches:
+  - name: "Aruba-6100"
+    host: "192.168.1.x"
+    os_type: "aruba_osix"
+    timeout: 30
+    rest_enabled: true
+    rest_port: 443
+    rest_verify_ssl: false         # required for self-signed certificates
+    # rest_username/password — omit to inherit from switch_credentials
+```
+
+**Requirements:**
+- AOS-CX 10.08 or later (6000 / 6100 series)
+- REST API enabled on the switch (enabled by default on AOS-CX)
+- HTTPS reachable from the server (port 443 by default)
 
 ### FortiGate API token
 
@@ -600,7 +685,7 @@ The search bar placeholder dynamically reflects your configuration:
 - When FortiGate is configured: `MAC, IP, or FortiGate address name`
 - Without FortiGate: `MAC or IP address`
 
-Results appear in 5–20 seconds depending on the number of switches and their response times.
+Results appear in 5–20 seconds depending on the number of switches and their response times. SSH connections are pooled and reused across concurrent traces, significantly reducing latency on back-to-back queries.
 
 ### IP address lookup without FortiGate
 
@@ -611,9 +696,11 @@ When no FortiGate is configured and an IP address is entered, the tool performs 
 3. All switches are re-queried with the discovered MAC to locate the device
 4. If no switch ARP table contains the IP, the result is "not found"
 
-### Vendor chips in the header
+### Vendor chips in the header and summary bar
 
 The header shows chips for each configured integration (FortiGate, Cisco, Aruba, Ruckus, etc.). If an integration is not configured, its chip does not appear. This lets users immediately see which data sources are active.
+
+After a trace completes, the **summary bar** also shows a **vendor path** — color-coded chips representing the sequence of distinct vendors traversed (e.g. **Cisco → Aruba**). Consecutive hops from the same vendor are collapsed into a single chip.
 
 ### Diagnostic options
 
@@ -633,7 +720,7 @@ Disabling options speeds up traces and reduces SSH commands on the switches.
 
 ### Settings UI
 
-Click the **gear icon in the footer** to open the Settings modal. Settings are organized into accordion sections:
+Click the **gear icon in the top-right header** to open the Settings modal. Settings are organized into accordion sections:
 
 | Section | What you can configure |
 |---|---|
@@ -682,6 +769,7 @@ The discovery engine walks CDP neighbors first, falls back to LLDP, and skips ac
 - Port-channel member link states
 - Uplink port error counters
 - FortiGate egress interface statistics (when SSH configured)
+- Data source indicator (SSH / RESTCONF / REST API) per hop
 - Ruckus AP wired uplink shown as ETH0 when no explicit port is returned
 
 ### Dark/light theme
@@ -716,6 +804,20 @@ The footer displays the current application version, read at runtime from `GET /
 - Confirm `os_type` is correct for your switch series (`aruba_os` for 2930/2930F/2930M, `aruba_osix` for 6000/6100)
 - Test SSH from the server: `ssh <username>@<switch-ip>`
 - Verify the account has read access to run `show` commands
+
+### RESTCONF returns no data (Cisco)
+- Confirm RESTCONF is enabled on the switch: `show restconf`
+- Verify the switch is running IOS-XE 16.6 or later: `show version`
+- Test manually: `curl -k -u <user>:<pass> https://<switch>/restconf/data/Cisco-IOS-XE-native:native/hostname`
+- Check that `restconf_verify_ssl: false` is set if the switch uses a self-signed certificate
+- If RESTCONF is unreachable, the tool falls back silently to SSH data
+
+### AOS-CX REST API returns no data (Aruba)
+- Confirm the REST API is enabled: `show rest-api server` (should show running)
+- Test manually: `curl -k -c cookies.txt -X POST https://<switch>/rest/v10.10/login -d '{"username":"...","password":"..."}'`
+- Check that `rest_verify_ssl: false` is set for self-signed certificates
+- AOS-CX REST API requires firmware 10.08 or later
+- If REST login fails, the tool falls back silently to SSH data
 
 ### FortiGate API errors
 - Verify `access_token` is correct and not expired
@@ -761,6 +863,10 @@ The footer displays the current application version, read at runtime from `GET /
 ### Port 8080 already in use
 Edit `config.yaml`, change `server.port` to another value (e.g. `8090`), restart.
 
+### "429 Too Many Requests" on trace or discover
+- The backend enforces rate limits to prevent abuse: 30 traces/minute and 10 discovery requests/minute per IP
+- Wait a moment before retrying — the rate-limit window slides every 60 seconds
+
 ---
 
 ## 10. Project Structure
@@ -768,7 +874,7 @@ Edit `config.yaml`, change `server.port` to another value (e.g. `8090`), restart
 ```
 netinspect/
 │
-├── VERSION                      ← Single source of truth for version number (e.g. 1.1.0)
+├── VERSION                      ← Single source of truth for version number (e.g. 1.2.0)
 ├── config.yaml                  ← Your credentials — gitignored, never committed
 ├── config.yaml.example          ← Template with all sections; copy to config.yaml
 ├── run.py                       ← Entry point: starts the uvicorn server
@@ -777,16 +883,23 @@ netinspect/
 ├── docker-compose.yml           ← Docker Compose deployment
 │
 ├── backend/
-│   ├── main.py                  ← FastAPI app + routes + security headers middleware
-│   ├── config.py                ← Config loader (YAML → Pydantic models)
+│   ├── main.py                  ← FastAPI app + routes + rate limiting + security headers middleware
+│   ├── config.py                ← Config loader (YAML → Pydantic models); fill_switch_creds()
 │   ├── models.py                ← Pydantic data models (Hop, Issue, TraceResult…)
 │   │
 │   ├── connectors/
 │   │   ├── fortigate.py         ← FortiGate REST API: ARP table, address objects, interfaces
 │   │   ├── fortigate_ssh.py     ← FortiGate SSH: platform info, egress port counters, LAG detection
 │   │   ├── cisco_ssh.py         ← Cisco SSH: MAC table, CDP/LLDP, ARP, STP, PoE, etherchannel
+│   │   │                          Uses SSH connection pool; merges RESTCONF results when enabled
 │   │   ├── cisco_snmp.py        ← Optional SNMP fast path: MAC table + IF-MIB stats (puresnmp)
+│   │   ├── cisco_restconf.py    ← Cisco RESTCONF: YANG-based MAC/ARP/CDP/LLDP/interface queries
+│   │   │                          Runs in parallel with SSH; results take precedence
 │   │   ├── aruba_ssh.py         ← Aruba SSH: AOS-S (2930/2930F/2930M) and AOS-CX (6000/6100)
+│   │   │                          Uses SSH connection pool; merges AOS-CX REST results when enabled
+│   │   ├── aruba_cx_rest.py     ← Aruba CX REST API: MAC/ARP/LLDP/interface queries (cookie auth)
+│   │   │                          Runs in parallel with SSH; results take precedence
+│   │   ├── ssh_pool.py          ← Thread-safe SSH connection pool (Netmiko reuse, max 2 per switch)
 │   │   ├── aruba_central.py     ← Aruba Central cloud API: wired + wireless client lookup
 │   │   ├── extreme_iq.py        ← ExtremeCloud IQ cloud API: client lookup
 │   │   └── ruckus_r1.py         ← Ruckus One REST: APs, managed switches, wireless clients (OAuth2)
@@ -804,7 +917,7 @@ netinspect/
     ├── index.html               ← Single-page app shell + diagnostics options panel + settings modal
     ├── css/style.css            ← Dark/light glassmorphism theme
     └── js/app.js                ← UI: capabilities check, trace, path render, hop cards, tests summary,
-                                    settings modal, discovery workflow, theme toggle
+                                    vendor path chips, settings modal, discovery workflow, theme toggle
 ```
 
 ### API endpoints
@@ -813,11 +926,11 @@ netinspect/
 |---|---|---|
 | `GET /api/health` | None | `{"status": "ok"}` |
 | `GET /api/capabilities` | None | Which integrations are configured; used at page load to adapt the UI |
-| `GET /api/ui-config` | None | `{"version": "1.1.0", "api_key_required": bool}`; footer reads this at runtime |
+| `GET /api/ui-config` | None | `{"version": "1.2.0", "api_key_required": bool}`; footer reads this at runtime |
 | `GET /api/settings` | Optional API key | Full config with secrets masked as `••••••••` |
-| `PUT /api/settings` | Optional API key | Save updated config; masked values are preserved from disk |
-| `POST /api/discover` | Optional API key | SSE stream of CDP/LLDP BFS discovery events from a seed IP |
-| `POST /api/trace` | Optional API key | Run a full network path trace. Body: `{"query": "...", "options": {...}}` |
+| `PUT /api/settings` | Optional API key | Save updated config; masked values are preserved from disk; 64 KB body limit |
+| `POST /api/discover` | Optional API key | SSE stream of CDP/LLDP BFS discovery events from a seed IP; rate limited 10/min |
+| `POST /api/trace` | Optional API key | Run a full network path trace; rate limited 30/min per IP |
 | `GET /api/devices` | Optional API key | Configured device names for status overview |
 
 The `/api/capabilities` response shape:
@@ -833,6 +946,18 @@ The `/api/capabilities` response shape:
 }
 ```
 
+### SSH Connection Pool
+
+SSH connections to switches are pooled and reused across concurrent traces. This eliminates the ~1–2 second per-switch SSH handshake cost on back-to-back queries.
+
+| Parameter | Value | Description |
+|---|---|---|
+| Max pooled per switch | 2 | Maximum concurrent connections kept per `(host, user, driver)` key |
+| Idle timeout | 300 s | Connections idle longer than this are closed automatically |
+| Wait timeout | 30 s | Max time to wait for a free slot before creating a temporary over-limit connection |
+| Liveness check | Paramiko transport | Dead connections are detected and replaced before reuse |
+| Shutdown | Graceful | All pooled connections are closed on FastAPI app shutdown |
+
 ### Data flow
 
 ```
@@ -842,9 +967,13 @@ resolver.py          Normalizes input → MAC + IP (two-pass ARP if no FortiGate
 
 mac_tracer.py        Orchestrates parallel queries:
     ├── fortigate.py + fortigate_ssh.py   ARP entry, egress interface, FG platform, LAG
-    ├── cisco_ssh.py (all switches)        MAC table, CDP/LLDP, diagnostics, ARP
+    ├── cisco_ssh.py (all switches)        MAC table, CDP/LLDP, diagnostics, ARP  [pool reuse]
     ├── cisco_snmp.py (optional)           Concurrent SNMP: MAC + interface stats
-    ├── aruba_ssh.py (all switches)        MAC table, ARP, interface stats
+    ├── cisco_restconf.py (optional)       Concurrent RESTCONF: MAC/ARP/CDP/LLDP/interfaces
+    │                                      → results take precedence over SSH
+    ├── aruba_ssh.py (all switches)        MAC table, ARP, interface stats  [pool reuse]
+    ├── aruba_cx_rest.py (optional)        Concurrent AOS-CX REST: MAC/ARP/LLDP/interfaces
+    │                                      → results take precedence over SSH
     ├── ruckus_r1.py                       Wireless clients, AP info, switch ports (OAuth2)
     ├── aruba_central.py                   Wired + wireless client lookup (OAuth2)
     └── extreme_iq.py                      Client lookup (API key)
@@ -861,6 +990,7 @@ TraceResult JSON     Returned to frontend
 app.js               Reads /api/capabilities at load, adapts UI
                      Reads /api/ui-config for version display
                      Renders path nodes, hop cards, issues panel, test summary
+                     Renders vendor path chips in summary bar
                      Settings modal reads GET /api/settings, writes PUT /api/settings
                      Discovery workflow streams POST /api/discover SSE events
 ```
@@ -879,6 +1009,8 @@ When deploying:
 2. Copy `config.yaml.example` to `config.yaml`
 3. Edit `config.yaml` locally with your real credentials
 4. It will not be tracked by git
+
+At startup, the application checks `config.yaml` file permissions and logs a warning if the file is readable by group or world. On Linux/Docker deployments, set `chmod 600 config.yaml` to restrict access to the process owner only.
 
 ### Credential exposure in git history
 
@@ -907,7 +1039,7 @@ If earlier development commits included real credentials before `.gitignore` was
 
 Set `server.api_key` in `config.yaml` to require an `X-API-Key` header on all backend API calls. Useful when the tool is exposed beyond a trusted LAN segment. The `/api/capabilities`, `/api/health`, and `/api/ui-config` endpoints are always unauthenticated (they contain no credentials or sensitive data).
 
-### Security hardening (v1.1.0)
+### Security hardening
 
 The following security controls are active by default:
 
@@ -919,6 +1051,11 @@ The following security controls are active by default:
 - **Security response headers** — `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Content-Security-Policy` set on all responses via middleware
 - **CORS lockdown** — set `server.allowed_origins` in `config.yaml` to restrict cross-origin access for non-LAN deployments; blank allows all origins
 - **`verify_ssl: false` warning** — logged at startup when SSL verification is disabled for FortiGate
+- **Rate limiting** — sliding-window rate limiter per IP address: 30 traces/minute on `/api/trace`, 10 requests/minute on `/api/discover`; HTTP 429 returned when exceeded
+- **IP input validation** — `seed_ip` in `/api/discover` is validated with `ipaddress.ip_address()` to prevent hostname injection / SSRF
+- **Request body size limit** — `PUT /api/settings` rejects request bodies larger than 64 KB
+- **Config file permissions check** — at startup, warns if `config.yaml` is group- or world-readable (`chmod 600 config.yaml` recommended on Linux)
+- **HTTPS for REST APIs** — RESTCONF (Cisco) and AOS-CX REST (Aruba) connections use HTTPS with configurable SSL verification
 
 ### MFA / TACACS
 
@@ -933,7 +1070,7 @@ Automated SSH via Netmiko is incompatible with interactive MFA (Duo push, TOTP, 
 
 This is standard practice for all network automation tools (Ansible, NSO, SolarWinds, PRTG). The `switch_credentials` section in `config.yaml` is designed for exactly this service account pattern — one set of credentials shared across all switches.
 
-If your organization cannot exempt any account from MFA, alternatives include SNMP v3 for counters and status (already partially implemented via the optional SNMP fast-path) or per-switch REST APIs on modern IOS-XE and Aruba CX platforms.
+If your organization cannot exempt any account from MFA, alternatives include SNMP v3 for counters and status (already partially implemented via the optional SNMP fast-path) or per-switch REST APIs on modern IOS-XE and Aruba CX platforms (now supported via RESTCONF and AOS-CX REST).
 
 ### Minimum required permissions
 
@@ -941,9 +1078,11 @@ If your organization cannot exempt any account from MFA, alternatives include SN
 |---|---|
 | FortiGate REST API | Read-only: Monitor, Network, Firewall |
 | FortiGate SSH | Read-only admin (no config write needed) |
-| Cisco switches | Read-only SSH user (`privilege 1` is sufficient) |
-| Aruba switches (AOS-S) | Operator-level account (read-only show commands) |
-| Aruba switches (AOS-CX) | Read-only role |
+| Cisco switches (SSH) | Read-only SSH user (`privilege 1` is sufficient) |
+| Cisco switches (RESTCONF) | Same account as SSH, or a dedicated HTTP-only account |
+| Aruba switches (AOS-S, SSH) | Operator-level account (read-only show commands) |
+| Aruba switches (AOS-CX, SSH) | Read-only role |
+| Aruba switches (AOS-CX, REST) | Same account as SSH, or a dedicated REST-only account |
 | Ruckus R1 | Read-only API token scoped to your venues |
 | Aruba Central | Read-only API token (client and device read) |
 | ExtremeCloud IQ | Read-only API key |
@@ -953,6 +1092,8 @@ If your organization cannot exempt any account from MFA, alternatives include SN
 The server running NetInspect needs:
 - HTTPS outbound to FortiGate (port 443) — if configured
 - SSH outbound to all Cisco and Aruba switches (port 22) — for configured switches
+- HTTPS outbound to Cisco switches (port 443) — if RESTCONF enabled
+- HTTPS outbound to Aruba switches (port 443) — if AOS-CX REST enabled
 - HTTPS outbound to `api.asia.ruckus.cloud` (or your regional endpoint) — if Ruckus R1 configured
 - HTTPS outbound to your Aruba Central gateway — if Aruba Central configured
 - HTTPS outbound to `extremecloudiq.com` — if ExtremeCloud IQ configured
@@ -965,39 +1106,44 @@ No inbound ports are needed other than `8080` for the web UI.
 
 | Feature | Status |
 |---|---|
-| FortiGate + Cisco + Ruckus R1 path trace | Done |
-| Chain-walk topology (handles non-SSH intermediate switches) | Done |
-| Vendor / model / software version per hop | Done |
-| MTU / duplex / error / STP / PoE diagnostics | Done |
-| Selectable diagnostic options per trace | Done |
-| Per-test pass/fail summary panel | Done |
-| Physical port connections between hops | Done |
-| FortiGate SSH egress interface stats | Done |
-| FortiGate LAG (aggregate) member detection | Done |
-| Port-channel / LAG member link status (Cisco) | Done |
-| Ruckus switch port enrichment from R1 | Done |
-| Ruckus AP ETH0 uplink fallback + firmware field variants | Done |
-| `show ip arp` + `show mac address-table` for richer discovery | Done |
-| Issues panel with source device attribution | Done |
-| Docker / Unraid deployment | Done |
-| Optional SNMP fast path for Cisco switches (MAC + IF-MIB stats) | Done |
-| Aruba switch support — AOS-S (2930/2930F/2930M) and AOS-CX (6000/6100) | Done |
-| Aruba Central cloud API integration (wired + wireless) | Done |
-| ExtremeCloud IQ cloud API integration | Done |
-| Fully modular / vendor-agnostic config (all sections optional) | Done |
-| Two-pass ARP resolution from switches (no FortiGate required) | Done |
-| /api/capabilities endpoint for UI adaptation | Done |
-| Dark/light theme toggle with localStorage persistence | Done |
-| System Logs diagnostic option (`show logging`) | Done |
-| Dynamic versioning via VERSION file + /api/ui-config | Done |
-| Web-based Settings UI (gear icon, accordion sections, save to config.yaml) | Done |
-| Global switch credentials (`switch_credentials`) with per-switch override | Done |
-| CDP/LLDP Auto-Discovery (BFS walk, SSE progress stream, add to inventory) | Done |
-| Security hardening (XSS, timing-safe key compare, SSH injection, CSP headers) | Done |
+| FortiGate + Cisco + Ruckus R1 path trace | ✅ Done |
+| Chain-walk topology (handles non-SSH intermediate switches) | ✅ Done |
+| Vendor / model / software version per hop | ✅ Done |
+| MTU / duplex / error / STP / PoE diagnostics | ✅ Done |
+| Selectable diagnostic options per trace | ✅ Done |
+| Per-test pass/fail summary panel | ✅ Done |
+| Physical port connections between hops | ✅ Done |
+| FortiGate SSH egress interface stats | ✅ Done |
+| FortiGate LAG (aggregate) member detection | ✅ Done |
+| Port-channel / LAG member link status (Cisco) | ✅ Done |
+| Ruckus switch port enrichment from R1 | ✅ Done |
+| Ruckus AP ETH0 uplink fallback + firmware field variants | ✅ Done |
+| `show ip arp` + `show mac address-table` for richer discovery | ✅ Done |
+| Issues panel with source device attribution | ✅ Done |
+| Docker / Unraid deployment | ✅ Done |
+| Optional SNMP fast path for Cisco switches (MAC + IF-MIB stats) | ✅ Done |
+| Aruba switch support — AOS-S (2930/2930F/2930M) and AOS-CX (6000/6100) | ✅ Done |
+| Aruba Central cloud API integration (wired + wireless) | ✅ Done |
+| ExtremeCloud IQ cloud API integration | ✅ Done |
+| Fully modular / vendor-agnostic config (all sections optional) | ✅ Done |
+| Two-pass ARP resolution from switches (no FortiGate required) | ✅ Done |
+| /api/capabilities endpoint for UI adaptation | ✅ Done |
+| Dark/light theme toggle with localStorage persistence | ✅ Done |
+| System Logs diagnostic option (`show logging`) | ✅ Done |
+| Dynamic versioning via VERSION file + /api/ui-config | ✅ Done |
+| Web-based Settings UI (gear icon, accordion sections, save to config.yaml) | ✅ Done |
+| Global switch credentials (`switch_credentials`) with per-switch override | ✅ Done |
+| CDP/LLDP Auto-Discovery (BFS walk, SSE progress stream, add to inventory) | ✅ Done |
+| Security hardening (XSS, timing-safe key compare, SSH injection, CSP headers) | ✅ Done |
+| Vendor path chips in summary bar (color-coded, deduplicated) | ✅ Done |
+| SSH connection pooling (reuse connections across concurrent traces, max 2 per switch, 300s idle) | ✅ Done |
+| RESTCONF fast-path for Cisco IOS-XE 16.6+ (parallel with SSH, results take precedence) | ✅ Done |
+| AOS-CX REST API fast-path for Aruba 6000/6100 (parallel with SSH, results take precedence) | ✅ Done |
+| Rate limiting (30/min trace, 10/min discover, per IP, sliding window) | ✅ Done |
+| IP input validation + request body size limit (SSRF / DoS prevention) | ✅ Done |
+| Config file permission warning at startup | ✅ Done |
 | Export trace to PDF / CSV | Planned |
 | Saved trace history / comparison | Planned |
 | FortiAnalyzer log correlation | Planned |
 | Email / Teams alert on critical issues | Planned |
 | Palo Alto firewall support | Planned |
-| RESTCONF / NETCONF device API support (alternative to SSH for modern IOS-XE / Aruba CX) | Planned |
-| SSH connection pooling (reuse connections across concurrent traces) | Planned |

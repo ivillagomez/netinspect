@@ -65,26 +65,23 @@ class CiscoSwitch:
         self._hostname: Optional[str] = None
 
     # ------------------------------------------------------------------
-    # Connection management
+    # Connection management (pool-backed)
     # ------------------------------------------------------------------
 
     def _connect(self):
-        self._conn = ConnectHandler(
-            device_type=self.config.device_type,
-            host=self.config.host,
-            username=self.config.username,
-            password=self.config.password,
-            timeout=self.config.timeout,
-            session_timeout=self.config.timeout,
-            global_delay_factor=1,
-        )
+        from backend.connectors.ssh_pool import _pool
+        self._conn = _pool.acquire(self.config)
 
     def _disconnect(self):
         if self._conn:
             try:
-                self._conn.disconnect()
+                from backend.connectors.ssh_pool import _pool
+                _pool.release(self.config, self._conn)
             except Exception:
-                pass
+                try:
+                    self._conn.disconnect()
+                except Exception:
+                    pass
             self._conn = None
 
     def _cmd(self, command: str) -> str:
@@ -103,14 +100,31 @@ class CiscoSwitch:
     async def gather_all(self, mac: str, options: Optional[DiagnosticOptions] = None) -> Dict:
         """Connect once, run all relevant commands, disconnect. Returns raw dict.
 
-        If snmp_community is set in config, SNMP runs concurrently with SSH and
-        provides MAC entry, system info, and interface stats via IF-MIB/Q-BRIDGE-MIB.
-        SSH always runs for CDP/LLDP, STP, PoE, port-channel, and IOS version.
+        Data sources (applied in priority order, highest first):
+          1. RESTCONF — when restconf_enabled, runs in parallel with SSH.
+             Covers: mac_entry, hostname, version, CDP/LLDP, ARP, int status/details.
+          2. SNMP     — when snmp_community is set, runs in parallel with SSH.
+             Covers: mac_entry (fallback), system info, interface stats.
+          3. SSH      — always runs; covers everything not available via REST/SNMP
+             (STP, PoE, port-channel, system MTU, system logs, etherchannel).
         """
         if options is None:
             options = DiagnosticOptions()
         cisco_mac = mac_to_cisco(mac)
         result = {"switch": self.name, "host": self.host, "reachable": False}
+
+        # ------------------------------------------------------------------
+        # Optional RESTCONF client — when restconf_enabled in config
+        # ------------------------------------------------------------------
+        restconf = None
+        if getattr(self.config, "restconf_enabled", False):
+            try:
+                from backend.connectors.cisco_restconf import CiscoRestconf, HAS_AIOHTTP
+                if HAS_AIOHTTP:
+                    restconf = CiscoRestconf(self.config)
+                    logger.debug("[%s] RESTCONF hybrid path enabled", self.name)
+            except Exception as e:
+                logger.debug("[%s] RESTCONF init failed: %s", self.name, type(e).__name__)
 
         # ------------------------------------------------------------------
         # Optional SNMP client — instantiated only if configured + available
@@ -258,6 +272,71 @@ class CiscoSwitch:
         else:
             # No SNMP configured — pure SSH path (original behaviour)
             result = await self._run(_work)
+
+        # ------------------------------------------------------------------
+        # RESTCONF hybrid merge — runs concurrently with SSH+SNMP above
+        # ------------------------------------------------------------------
+        if restconf is not None:
+            try:
+                rc_mac, rc_host, rc_ver, rc_cdp, rc_lldp, rc_arp = await asyncio.gather(
+                    restconf.get_mac_entry(mac),
+                    restconf.get_hostname(),
+                    restconf.get_version(),
+                    restconf.get_cdp_neighbors(),
+                    restconf.get_lldp_neighbors(),
+                    restconf.get_arp_table(),
+                    return_exceptions=True,
+                )
+
+                # Helper so exceptions from gather() don't overwrite good data
+                def _rc(val):
+                    return None if isinstance(val, Exception) else val
+
+                rc_mac_e  = _rc(rc_mac)
+                rc_host_e = _rc(rc_host)
+                rc_ver_e  = _rc(rc_ver)
+                rc_cdp_e  = _rc(rc_cdp)
+                rc_lldp_e = _rc(rc_lldp)
+                rc_arp_e  = _rc(rc_arp)
+
+                if any(v is not None for v in [rc_mac_e, rc_host_e, rc_ver_e]):
+                    # RESTCONF is responding — treat as authoritative for these fields
+                    result["reachable"] = True
+                    result["restconf_source"] = True
+
+                if rc_host_e:
+                    result["hostname"] = rc_host_e
+                if rc_ver_e:
+                    existing = result.get("version") or {}
+                    result["version"] = {**existing, **rc_ver_e}   # RESTCONF enriches SSH version dict
+                if rc_mac_e and not result.get("mac_entry"):
+                    result["mac_entry"] = rc_mac_e
+                    logger.info("[%s] MAC entry from RESTCONF: port=%s vlan=%s",
+                                self.name, rc_mac_e.port, rc_mac_e.vlan)
+                if rc_cdp_e:
+                    result["all_cdp"] = rc_cdp_e
+                if rc_lldp_e:
+                    result["all_lldp"] = rc_lldp_e
+                if rc_arp_e:
+                    result["arp_table"] = rc_arp_e
+
+                # Per-port interface details from RESTCONF (only if MAC found)
+                mac_entry = result.get("mac_entry")
+                if mac_entry and mac_entry.port:
+                    port = mac_entry.port
+                    if options.interface_status or options.error_counters or options.mtu_check:
+                        rc_istatus, rc_idetails = await asyncio.gather(
+                            restconf.get_interface_status(port),
+                            restconf.get_interface_details(port),
+                            return_exceptions=True,
+                        )
+                        if not isinstance(rc_istatus, Exception) and rc_istatus:
+                            result["int_status"] = rc_istatus
+                        if not isinstance(rc_idetails, Exception) and rc_idetails:
+                            result["int_details"] = rc_idetails
+
+            except Exception as e:
+                logger.debug("[%s] RESTCONF merge error: %s", self.name, type(e).__name__)
 
         return result
 

@@ -128,24 +128,22 @@ class ArubaSwitch:
         self._is_cx = config.os_type == "aruba_osix"
         self._conn = None
 
-    # ── Connection ────────────────────────────────────────────────────────────
+    # ── Connection (pool-backed) ──────────────────────────────────────────────
 
     def _connect(self):
-        self._conn = ConnectHandler(
-            device_type=self.config.os_type,
-            host=self.config.host,
-            username=self.config.username,
-            password=self.config.password,
-            timeout=self.config.timeout,
-            session_timeout=self.config.timeout,
-        )
+        from backend.connectors.ssh_pool import _pool
+        self._conn = _pool.acquire(self.config)
 
     def _disconnect(self):
         if self._conn:
             try:
-                self._conn.disconnect()
+                from backend.connectors.ssh_pool import _pool
+                _pool.release(self.config, self._conn)
             except Exception:
-                pass
+                try:
+                    self._conn.disconnect()
+                except Exception:
+                    pass
             self._conn = None
 
     def _cmd(self, command: str) -> str:
@@ -160,6 +158,12 @@ class ArubaSwitch:
     # ── Public async API ──────────────────────────────────────────────────────
 
     async def gather_all(self, norm_mac: str, options: Optional[DiagnosticOptions] = None) -> Dict:
+        """Connect, run commands, return raw dict.
+
+        When rest_enabled (AOS-CX only), the Aruba CX REST API runs in parallel
+        with SSH.  REST wins on: mac_entry, hostname, LLDP neighbors, interface
+        status/details, ARP table.  SSH always runs for system logs.
+        """
         if options is None:
             options = DiagnosticOptions()
         result: Dict[str, Any] = {
@@ -169,6 +173,19 @@ class ArubaSwitch:
             "os_type": self.os_type,
             "reachable": False,
         }
+
+        # ------------------------------------------------------------------
+        # Optional ArubaOS-CX REST client (CX only, when rest_enabled)
+        # ------------------------------------------------------------------
+        rest = None
+        if getattr(self.config, "rest_enabled", False) and self._is_cx:
+            try:
+                from backend.connectors.aruba_cx_rest import ArubaCxRest, HAS_AIOHTTP
+                if HAS_AIOHTTP:
+                    rest = ArubaCxRest(self.config)
+                    logger.debug("[%s] ArubaOS-CX REST hybrid path enabled", self.name)
+            except Exception as e:
+                logger.debug("[%s] ArubaOS-CX REST init failed: %s", self.name, type(e).__name__)
 
         def _work():
             try:
@@ -201,7 +218,63 @@ class ArubaSwitch:
                 self._disconnect()
             return result
 
-        return await self._run(_work)
+        # Run SSH (always) — REST merge happens after if configured
+        ssh_result = await self._run(_work)
+        result = ssh_result if isinstance(ssh_result, dict) else result
+
+        # ------------------------------------------------------------------
+        # ArubaOS-CX REST hybrid merge
+        # ------------------------------------------------------------------
+        if rest is not None:
+            try:
+                logged_in = await rest.login()
+                if logged_in:
+                    rc_mac, rc_host, rc_lldp, rc_arp = await asyncio.gather(
+                        rest.get_mac_entry(norm_mac),
+                        rest.get_hostname(),
+                        rest.get_lldp_neighbors(),
+                        rest.get_arp_table(),
+                        return_exceptions=True,
+                    )
+
+                    def _rc(val):
+                        return None if isinstance(val, Exception) else val
+
+                    if _rc(rc_mac) or _rc(rc_host):
+                        result["reachable"]    = True
+                        result["rest_source"]  = True
+
+                    if _rc(rc_host):
+                        result["hostname"] = rc_host
+                    if _rc(rc_mac) and not result.get("mac_entry"):
+                        result["mac_entry"] = rc_mac
+                        logger.info("[%s] MAC entry from REST API: port=%s vlan=%s",
+                                    self.name, rc_mac.port, rc_mac.vlan)
+                    if _rc(rc_lldp):
+                        result["all_lldp"] = rc_lldp
+                    if _rc(rc_arp):
+                        result["arp_table"] = rc_arp
+
+                    # Per-port interface details from REST
+                    mac_entry = result.get("mac_entry")
+                    if mac_entry and mac_entry.port:
+                        port = mac_entry.port
+                        if options.interface_status or options.error_counters or options.mtu_check:
+                            rc_istatus, rc_idetails = await asyncio.gather(
+                                rest.get_interface_status(port),
+                                rest.get_interface_details(port),
+                                return_exceptions=True,
+                            )
+                            if not isinstance(rc_istatus, Exception) and rc_istatus:
+                                result["int_status"] = rc_istatus
+                            if not isinstance(rc_idetails, Exception) and rc_idetails:
+                                result["int_details"] = rc_idetails
+
+                    await rest.logout()
+            except Exception as e:
+                logger.debug("[%s] ArubaOS-CX REST merge error: %s", self.name, type(e).__name__)
+
+        return result
 
     # ── CLI commands (sync, runs in executor) ─────────────────────────────────
 

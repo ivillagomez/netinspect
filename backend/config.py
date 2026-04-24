@@ -35,6 +35,12 @@ class CiscoSwitchConfig(BaseModel):
     snmp_community: Optional[str] = None   # None = SNMP disabled
     snmp_port: int = 161
     snmp_version: str = "2c"               # "1" or "2c"
+    # RESTCONF — REST alternative to SSH for IOS-XE 16.6+ / Catalyst 9000 series
+    restconf_enabled: bool = False
+    restconf_port: int = 443
+    restconf_verify_ssl: bool = True
+    restconf_username: Optional[str] = None   # None → use username / global creds
+    restconf_password: Optional[str] = None   # None → use password / global creds
 
 
 class RuckusR1Config(BaseModel):
@@ -67,6 +73,12 @@ class ArubaSwitchConfig(BaseModel):
     password: Optional[str] = None
     os_type: str = "aruba_os"   # "aruba_os" (2930/2930F/2930M) | "aruba_osix" (6000/6100)
     timeout: int = 30
+    # REST API — alternative to SSH for Aruba CX (AOS-CX 10.x)
+    rest_enabled: bool = False
+    rest_port: int = 443
+    rest_verify_ssl: bool = True
+    rest_username: Optional[str] = None
+    rest_password: Optional[str] = None
 
 
 class ArubaCentralConfig(BaseModel):
@@ -164,20 +176,44 @@ T = type  # used by fill_switch_creds below
 def fill_switch_creds(sw_cfg, global_creds: Optional[SwitchCredentials]):
     """Return sw_cfg with username/password back-filled from global_creds where blank.
 
+    Fills both the SSH fields (username/password) and any API fields
+    (restconf_username/password for Cisco, rest_username/password for Aruba)
+    that are not already set.
+
     Does NOT mutate the original; returns a new model instance only when changes
     are needed so callers can detect whether override happened.
     """
     if not global_creds:
         return sw_cfg
-    needs_user = not sw_cfg.username
-    needs_pass = not sw_cfg.password
-    if not (needs_user or needs_pass):
-        return sw_cfg
     data = sw_cfg.model_dump()
-    if needs_user:
+    changed = False
+
+    # SSH credentials
+    if not data.get("username"):
         data["username"] = global_creds.username
-    if needs_pass:
+        changed = True
+    if not data.get("password"):
         data["password"] = global_creds.password
+        changed = True
+
+    # RESTCONF credentials (Cisco only — ArubaSwitchConfig doesn't have these keys)
+    if "restconf_username" in data and not data.get("restconf_username"):
+        data["restconf_username"] = global_creds.username
+        changed = True
+    if "restconf_password" in data and not data.get("restconf_password"):
+        data["restconf_password"] = global_creds.password
+        changed = True
+
+    # REST credentials (Aruba only)
+    if "rest_username" in data and not data.get("rest_username"):
+        data["rest_username"] = global_creds.username
+        changed = True
+    if "rest_password" in data and not data.get("rest_password"):
+        data["rest_password"] = global_creds.password
+        changed = True
+
+    if not changed:
+        return sw_cfg
     return type(sw_cfg)(**data)
 
 

@@ -1,17 +1,20 @@
 import asyncio
+import collections
 import hmac
+import ipaddress
+import json
 import logging
 import os
+import stat
+import time as _time
 from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-
-import json
 from backend.config import (
-    load_config, save_config, reset_config,
+    load_config, save_config, reset_config, _find_config_path,
     AppConfig, FortiGateConfig, CiscoSwitchConfig, ArubaSwitchConfig,
     RuckusR1Config, ArubaCentralConfig, ExtremeIQConfig,
     ServerConfig, SwitchCredentials,
@@ -41,6 +44,36 @@ def _merge_secret(submitted, current):
     if not submitted:
         return None
     return submitted
+
+# ── Rate limiter ───────────────────────────────────────────────────────────────
+
+class _RateLimiter:
+    """Sliding-window per-IP rate limiter (no external dependencies).
+
+    Default: 30 requests per 60-second window.
+    Returns True if the request is allowed, False if over limit.
+    """
+    def __init__(self, max_calls: int = 30, window: int = 60):
+        self._max  = max_calls
+        self._win  = window
+        self._calls: dict = {}
+        self._lock = asyncio.Lock()
+
+    async def is_allowed(self, key: str) -> bool:
+        async with self._lock:
+            now = _time.monotonic()
+            q   = self._calls.setdefault(key, collections.deque())
+            while q and q[0] < now - self._win:
+                q.popleft()
+            if len(q) >= self._max:
+                return False
+            q.append(now)
+            return True
+
+
+_trace_limiter    = _RateLimiter(max_calls=30, window=60)   # /api/trace
+_discover_limiter = _RateLimiter(max_calls=10, window=60)   # /api/discover
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -152,11 +185,40 @@ async def startup():
     except Exception as e:
         logger.error(f"Startup config error: {e}")
 
+    # ── Config file permission check ───────────────────────────────────────────
+    try:
+        cfg_path = _find_config_path()
+        if cfg_path and os.path.isfile(cfg_path):
+            mode = os.stat(cfg_path).st_mode
+            if mode & (stat.S_IRGRP | stat.S_IROTH):
+                logger.warning(
+                    "SECURITY: config.yaml at %s is readable by group/other "
+                    "(permissions: %s).  Run: chmod 600 %s",
+                    cfg_path, oct(mode & 0o777), cfg_path,
+                )
+    except Exception as e:
+        logger.debug("Permission check skipped: %s", e)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    try:
+        from backend.connectors.ssh_pool import _pool
+        _pool.close_all()
+    except Exception:
+        pass
+    logger.info("NetInspect shut down")
+
 
 # ── API routes ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/trace", response_model=TraceResult, dependencies=[Depends(verify_api_key)])
-async def trace(request: TraceRequest):
+async def trace(http_request: Request, request: TraceRequest):
+    # Rate limiting — per client IP
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    if not await _trace_limiter.is_allowed(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded — max 30 traces per minute")
+
     if not request.query or not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     if len(request.query) > 256:
@@ -270,6 +332,11 @@ async def discover(request: Request):
       snmp        object — {community, port, version}
                            SNMP only; community defaults to "public".
     """
+    # Rate limiting — per client IP
+    client_ip = request.client.host if request.client else "unknown"
+    if not await _discover_limiter.is_allowed(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded — max 10 discoveries per minute")
+
     body = await request.json()
 
     seed_ip   = (body.get("seed_ip") or "").strip()
@@ -282,6 +349,12 @@ async def discover(request: Request):
 
     if not seed_ip:
         raise HTTPException(status_code=400, detail="seed_ip is required")
+
+    # Validate seed_ip is a real IP address (prevents SSRF via hostname injection)
+    try:
+        ipaddress.ip_address(seed_ip)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="seed_ip must be a valid IPv4 or IPv6 address")
 
     # ── SSH credentials ────────────────────────────────────────────────────────
     username = password = device_type = ""
@@ -415,7 +488,11 @@ async def get_settings():
 @app.put("/api/settings", dependencies=[Depends(verify_api_key)])
 async def put_settings(request: Request):
     """Save updated config. Fields set to the mask sentinel are preserved from disk."""
-    body = await request.json()
+    # Body size guard — prevents very large payloads from being parsed
+    body_bytes = await request.body()
+    if len(body_bytes) > 65_536:   # 64 KB
+        raise HTTPException(status_code=413, detail="Request body too large (max 64 KB)")
+    body = json.loads(body_bytes)
     current = load_config()
 
     # ── FortiGate ──────────────────────────────────────────────────────────────
