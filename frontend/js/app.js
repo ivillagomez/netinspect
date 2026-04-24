@@ -129,11 +129,75 @@ async function apiFetch(url, opts = {}) {
 document.addEventListener('DOMContentLoaded', () => {
   initUI();
   _syncThemeButton();   // set label/icon to match saved theme
-  document.getElementById('searchInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') doTrace();
-  });
+  initEventHandlers();
   _renderHistoryPanel(_loadHistoryEntries());
 });
+
+// Wire up all event handlers in JavaScript so the page works under a strict
+// Content-Security-Policy (script-src 'self') that blocks inline onclick= attrs.
+function initEventHandlers() {
+  // ── Header ────────────────────────────────────────────────
+  document.querySelector('.header-settings-btn')
+    ?.addEventListener('click', openSettings);
+  document.getElementById('themeToggle')
+    ?.addEventListener('click', toggleTheme);
+
+  // ── Search ────────────────────────────────────────────────
+  document.getElementById('traceBtn')
+    ?.addEventListener('click', doTrace);
+  document.getElementById('searchInput')
+    ?.addEventListener('keydown', e => { if (e.key === 'Enter') doTrace(); });
+  document.querySelectorAll('.search-examples code')
+    .forEach(el => el.addEventListener('click', function () { fillExample(this); }));
+
+  // ── Diagnostics options panel ─────────────────────────────
+  document.querySelector('.options-toggle')
+    ?.addEventListener('click', toggleOptions);
+  ['opt_interface_status', 'opt_error_counters', 'opt_mtu_check',
+   'opt_stp', 'opt_poe', 'opt_neighbor_info', 'opt_system_logs']
+    .forEach(id => document.getElementById(id)
+      ?.addEventListener('change', updateOptionsLabel));
+
+  // ── Settings modal ────────────────────────────────────────
+  document.getElementById('settingsOverlay')
+    ?.addEventListener('click', closeSettingsOnBackdrop);
+  document.querySelector('.settings-close')
+    ?.addEventListener('click', closeSettings);
+  document.querySelectorAll('.settings-section-hd')
+    .forEach(el => el.addEventListener('click', function () { toggleSettingsSection(this); }));
+  document.getElementById('addCiscoBtn')
+    ?.addEventListener('click', () => addSwitchRow('cisco'));
+  document.getElementById('addArubaBtn')
+    ?.addEventListener('click', () => addSwitchRow('aruba'));
+  document.getElementById('settingsCancelBtn')
+    ?.addEventListener('click', closeSettings);
+  document.getElementById('settingsSaveBtn')
+    ?.addEventListener('click', saveSettings);
+
+  // ── Discovery ─────────────────────────────────────────────
+  document.getElementById('disc_protocol')
+    ?.addEventListener('change', discUpdateProtocolFields);
+  document.getElementById('discStartBtn')
+    ?.addEventListener('click', startDiscovery);
+  document.getElementById('discStopBtn')
+    ?.addEventListener('click', stopDiscovery);
+  document.getElementById('discSelectAll')
+    ?.addEventListener('change', function () { discToggleAll(this.checked); });
+  document.getElementById('discAddBtn')
+    ?.addEventListener('click', addDiscoveredDevices);
+
+  // ── Export bar ────────────────────────────────────────────
+  document.getElementById('exportCsvBtn')
+    ?.addEventListener('click', downloadCsv);
+  document.getElementById('exportPrintBtn')
+    ?.addEventListener('click', () => window.print());
+
+  // ── History panel ─────────────────────────────────────────
+  document.querySelector('.history-header')
+    ?.addEventListener('click', toggleHistory);
+  document.getElementById('historyClearBtn')
+    ?.addEventListener('click', clearHistory);
+}
 
 async function initUI() {
   let caps = {};
@@ -182,9 +246,9 @@ function updateSearchHints(caps = {}) {
   const exRow = document.querySelector('.search-examples');
   if (exRow && caps.fortigate && !exRow.querySelector('[data-fg-example]')) {
     const code = document.createElement('code');
-    code.setAttribute('onclick', 'fillExample(this)');
     code.setAttribute('data-fg-example', '1');
     code.textContent = 'Server-Web-01';
+    code.addEventListener('click', function () { fillExample(this); });
     exRow.appendChild(code);
   }
 }
@@ -380,8 +444,10 @@ function _appendSwitchRow(type, sw = {}, idx) {
     ${!isAruba ? `<div class="settings-field settings-field--sm"><label>SNMP community</label>
       <input type="text" class="sw-snmp" value="${esc(sw.snmp_community || '')}" placeholder="public" autocomplete="off" spellcheck="false">
     </div>` : ''}
-    <button class="settings-switch-remove" onclick="removeSwitchRow(this)" title="Remove">✕</button>
+    <button class="settings-switch-remove" title="Remove">✕</button>
   `;
+  row.querySelector('.settings-switch-remove')
+    .addEventListener('click', () => row.remove());
   container.appendChild(row);
 }
 
@@ -1596,7 +1662,9 @@ function _renderHistoryPanel(entries) {
         `<div class="history-row-query">${esc(e.query)}</div>` +
         `<div class="history-row-meta">${esc(meta)}</div>` +
       `</div>` +
-      `<button class="history-row-load" onclick="loadHistoricTrace(${e.id})" title="Reload this trace">↩ Load</button>`;
+      `<button class="history-row-load" title="Reload this trace">↩ Load</button>`;
+    row.querySelector('.history-row-load')
+      .addEventListener('click', () => loadHistoricTrace(e.id));
     list.appendChild(row);
   });
 }

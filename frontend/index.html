@@ -22,7 +22,7 @@
           </svg>
           NetInspect
         </div>
-        <button class="header-settings-btn" onclick="openSettings()" title="Configure integrations and credentials">
+        <button class="header-settings-btn" title="Configure integrations and credentials">
           <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
             <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
           </svg>
@@ -44,7 +44,7 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <button class="btn-trace" id="traceBtn" onclick="doTrace()">
+          <button class="btn-trace" id="traceBtn">
             <span class="btn-label">Trace</span>
             <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
@@ -53,12 +53,12 @@
         </div>
         <div class="search-examples">
           Examples: &nbsp;
-          <code onclick="fillExample(this)">aa:bb:cc:dd:ee:ff</code>
-          <code onclick="fillExample(this)">192.168.1.100</code>
+          <code>aa:bb:cc:dd:ee:ff</code>
+          <code>192.168.1.100</code>
         </div>
 
         <!-- Diagnostic Options -->
-        <div class="options-toggle" onclick="toggleOptions()">
+        <div class="options-toggle">
           <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
             <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
           </svg>
@@ -68,43 +68,43 @@
         <div class="options-panel" id="optionsPanel">
           <div class="options-grid">
             <label class="opt-toggle">
-              <input type="checkbox" id="opt_interface_status" checked onchange="updateOptionsLabel()">
+              <input type="checkbox" id="opt_interface_status" checked>
               <span class="opt-slider"></span>
               <span class="opt-label">Interface Status</span>
               <span class="opt-desc">Port up/down, duplex, speed</span>
             </label>
             <label class="opt-toggle">
-              <input type="checkbox" id="opt_error_counters" checked onchange="updateOptionsLabel()">
+              <input type="checkbox" id="opt_error_counters" checked>
               <span class="opt-slider"></span>
               <span class="opt-label">Error Counters</span>
               <span class="opt-desc">CRC, input/output errors, runts</span>
             </label>
             <label class="opt-toggle">
-              <input type="checkbox" id="opt_mtu_check" checked onchange="updateOptionsLabel()">
+              <input type="checkbox" id="opt_mtu_check" checked>
               <span class="opt-slider"></span>
               <span class="opt-label">MTU Check</span>
               <span class="opt-desc">MTU consistency across path</span>
             </label>
             <label class="opt-toggle">
-              <input type="checkbox" id="opt_stp" checked onchange="updateOptionsLabel()">
+              <input type="checkbox" id="opt_stp" checked>
               <span class="opt-slider"></span>
               <span class="opt-label">Spanning Tree</span>
               <span class="opt-desc">STP port roles and states</span>
             </label>
             <label class="opt-toggle">
-              <input type="checkbox" id="opt_poe" checked onchange="updateOptionsLabel()">
+              <input type="checkbox" id="opt_poe" checked>
               <span class="opt-slider"></span>
               <span class="opt-label">PoE Status</span>
               <span class="opt-desc">Power over Ethernet checks</span>
             </label>
             <label class="opt-toggle">
-              <input type="checkbox" id="opt_neighbor_info" checked onchange="updateOptionsLabel()">
+              <input type="checkbox" id="opt_neighbor_info" checked>
               <span class="opt-slider"></span>
               <span class="opt-label">Neighbor Info</span>
               <span class="opt-desc">CDP / LLDP per-port neighbor</span>
             </label>
             <label class="opt-toggle">
-              <input type="checkbox" id="opt_system_logs" checked onchange="updateOptionsLabel()">
+              <input type="checkbox" id="opt_system_logs" checked>
               <span class="opt-slider"></span>
               <span class="opt-label">System Logs</span>
               <span class="opt-desc">Recent error/warning syslog entries</span>
@@ -129,10 +129,10 @@
 
     <!-- Trace history (localStorage) -->
     <div class="history-panel glass" id="historyPanel" style="display:none">
-      <div class="history-header" onclick="toggleHistory()">
+      <div class="history-header">
         <span class="history-title">Recent Traces</span>
         <span class="history-count badge badge-neutral" id="historyCount">0</span>
-        <button class="history-clear-btn" onclick="clearHistory(event)" title="Clear all history">Clear</button>
+        <button class="history-clear-btn" id="historyClearBtn" title="Clear all history">Clear</button>
         <span class="history-caret" id="historyCaret">›</span>
       </div>
       <div class="history-list" id="historyList" style="display:none"></div>
@@ -162,11 +162,11 @@
 
       <!-- Export bar -->
       <div class="export-bar" id="exportBar">
-        <button class="export-btn" onclick="downloadCsv()" title="Download results as CSV spreadsheet">
+        <button class="export-btn" id="exportCsvBtn" title="Download results as CSV spreadsheet">
           <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
           Export CSV
         </button>
-        <button class="export-btn" onclick="window.print()" title="Print or save as PDF">
+        <button class="export-btn" id="exportPrintBtn" title="Print or save as PDF">
           <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v3a2 2 0 002 2h1v2a1 1 0 001 1h8a1 1 0 001-1v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a1 1 0 00-1-1H6a1 1 0 00-1 1zm2 0h6v3H7V4zm-1 9a1 1 0 011-1h6a1 1 0 011 1v3H6v-3zm8-6a1 1 0 110 2 1 1 0 010-2z" clip-rule="evenodd"/></svg>
           Print / PDF
         </button>
@@ -195,7 +195,7 @@
     </div>
 
     <!-- ── Settings Modal ──────────────────────────────────────────────────── -->
-    <div id="settingsOverlay" class="settings-overlay hidden" onclick="closeSettingsOnBackdrop(event)">
+    <div id="settingsOverlay" class="settings-overlay hidden">
       <div class="settings-modal glass" role="dialog" aria-modal="true" aria-label="Settings">
 
         <div class="settings-header">
@@ -205,7 +205,7 @@
             </svg>
             Settings
           </div>
-          <button class="settings-close" onclick="closeSettings()" aria-label="Close">✕</button>
+          <button class="settings-close" aria-label="Close">✕</button>
         </div>
 
         <div class="settings-body">
@@ -213,7 +213,7 @@
 
           <!-- ── Switch Authentication ──────────────────────────── -->
           <div class="settings-section">
-            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+            <div class="settings-section-hd">
               <span>Switch Authentication</span>
               <span class="settings-caret">›</span>
             </div>
@@ -243,7 +243,7 @@
 
           <!-- ── Discover from Seed ───────────────────────────── -->
           <div class="settings-section">
-            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+            <div class="settings-section-hd">
               <span>Discover from Seed</span>
               <span class="disc-badge">CDP · LLDP</span>
               <span class="settings-caret">›</span>
@@ -268,7 +268,7 @@
               <div class="settings-grid-3" style="margin-top:4px">
                 <div class="settings-field settings-field--sm">
                   <label>Protocol</label>
-                  <select id="disc_protocol" onchange="discUpdateProtocolFields()">
+                  <select id="disc_protocol">
                     <option value="ssh">SSH (CDP / LLDP CLI)</option>
                     <option value="snmp">SNMP (CDP-MIB / LLDP-MIB)</option>
                     <option value="both">SNMP + SSH fallback</option>
@@ -321,7 +321,7 @@
                   </div>
                 </div>
               </div>
-              <button class="disc-start-btn" id="discStartBtn" onclick="startDiscovery()">
+              <button class="disc-start-btn" id="discStartBtn">
                 <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/></svg>
                 Start Discovery
               </button>
@@ -330,7 +330,7 @@
               <div id="discProgress" class="disc-progress hidden">
                 <div class="disc-progress-hd">
                   <span id="discProgressLabel">Discovering…</span>
-                  <button class="disc-stop-btn" id="discStopBtn" onclick="stopDiscovery()">Stop</button>
+                  <button class="disc-stop-btn" id="discStopBtn">Stop</button>
                 </div>
                 <div id="discLog" class="disc-log"></div>
               </div>
@@ -340,13 +340,13 @@
                 <div class="disc-results-hd">
                   <span id="discResultsLabel">Found devices</span>
                   <label class="disc-select-all">
-                    <input type="checkbox" id="discSelectAll" onchange="discToggleAll(this.checked)" checked>
+                    <input type="checkbox" id="discSelectAll" checked>
                     Select all
                   </label>
                 </div>
                 <div id="discDeviceList" class="disc-device-list"></div>
                 <div class="disc-results-footer">
-                  <button class="settings-btn-save disc-add-btn" onclick="addDiscoveredDevices()">Add selected to inventory</button>
+                  <button class="settings-btn-save disc-add-btn" id="discAddBtn">Add selected to inventory</button>
                 </div>
               </div>
             </div>
@@ -354,31 +354,31 @@
 
           <!-- ── Cisco Switches ────────────────────────────────── -->
           <div class="settings-section">
-            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+            <div class="settings-section-hd">
               <span>Cisco Switches</span>
               <span class="settings-caret">›</span>
             </div>
             <div class="settings-section-bd">
               <div id="cisco_switches_list" class="settings-switch-list"></div>
-              <button class="settings-add-btn" onclick="addSwitchRow('cisco')">+ Add Cisco switch</button>
+              <button class="settings-add-btn" id="addCiscoBtn">+ Add Cisco switch</button>
             </div>
           </div>
 
           <!-- ── Aruba Switches ────────────────────────────────── -->
           <div class="settings-section">
-            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+            <div class="settings-section-hd">
               <span>Aruba Switches</span>
               <span class="settings-caret">›</span>
             </div>
             <div class="settings-section-bd">
               <div id="aruba_switches_list" class="settings-switch-list"></div>
-              <button class="settings-add-btn" onclick="addSwitchRow('aruba')">+ Add Aruba switch</button>
+              <button class="settings-add-btn" id="addArubaBtn">+ Add Aruba switch</button>
             </div>
           </div>
 
           <!-- ── FortiGate ─────────────────────────────────────── -->
           <div class="settings-section">
-            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+            <div class="settings-section-hd">
               <span>FortiGate</span>
               <span class="settings-caret">›</span>
             </div>
@@ -426,7 +426,7 @@
 
           <!-- ── Cloud APIs ────────────────────────────────────── -->
           <div class="settings-section">
-            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+            <div class="settings-section-hd">
               <span>Cloud APIs</span>
               <span class="settings-caret">›</span>
             </div>
@@ -492,7 +492,7 @@
 
           <!-- ── Server ────────────────────────────────────────── -->
           <div class="settings-section">
-            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+            <div class="settings-section-hd">
               <span>Server</span>
               <span class="settings-caret">›</span>
             </div>
@@ -523,8 +523,8 @@
         </div><!-- /settings-body -->
 
         <div class="settings-footer">
-          <button class="settings-btn-cancel" onclick="closeSettings()">Cancel</button>
-          <button class="settings-btn-save" id="settingsSaveBtn" onclick="saveSettings()">Save Changes</button>
+          <button class="settings-btn-cancel" id="settingsCancelBtn">Cancel</button>
+          <button class="settings-btn-save" id="settingsSaveBtn">Save Changes</button>
         </div>
 
       </div>
@@ -540,8 +540,8 @@
         </a>
       </div>
       <div class="app-footer-right">
-        <span id="versionLabel">v1.1.0</span>
-        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
+        <span id="versionLabel">v1.2.0</span>
+        <button class="theme-toggle" id="themeToggle">
           <!-- Sun icon — shown in dark mode, click to switch to light -->
           <svg id="themeIconSun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="4"/>
