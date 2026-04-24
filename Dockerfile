@@ -13,6 +13,10 @@ COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 COPY run.py .
 
+# Create the data directory before dropping privileges so the named volume
+# inherits appuser ownership when Docker mounts it for the first time.
+RUN mkdir -p /app/data
+
 # Drop root — run as an unprivileged user
 RUN useradd -r -s /bin/false appuser && chown -R appuser /app
 USER appuser

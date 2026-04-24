@@ -7,11 +7,21 @@ services:
     container_name: netinspect-tool
     ports:
       - "8080:8080"
+    environment:
+      # Tell the app where to read/write its config inside the container.
+      # The named volume below keeps it across restarts and avoids the
+      # Docker "missing file becomes a directory" bind-mount problem.
+      - NETWORK_TRACER_CONFIG=/app/data/config.yaml
     volumes:
-      - ./config.yaml:/app/config.yaml
+      - netinspect_data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+# Named volume — Docker manages ownership so the unprivileged container user
+# can always write to it, no manual file/dir creation needed on the host.
+volumes:
+  netinspect_data:

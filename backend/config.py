@@ -19,7 +19,7 @@ class SwitchCredentials(BaseModel):
 class FortiGateConfig(BaseModel):
     host: str
     port: int = 443
-    access_token: str
+    access_token: Optional[str] = None   # None = SSH-only mode (no REST API)
     verify_ssl: bool = True
     ssh_username: Optional[str] = None
     ssh_password: Optional[str] = None
@@ -86,9 +86,9 @@ class ArubaSwitchConfig(BaseModel):
 
 class ArubaCentralConfig(BaseModel):
     base_url: str = "https://apigw-prod2.central.arubanetworks.com"
-    client_id: str
-    client_secret: str
-    customer_id: str             # tenant ID — required for token scope
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    customer_id: Optional[str] = None    # tenant ID — required for token scope
 
 
 class ExtremeIQConfig(BaseModel):
@@ -164,12 +164,21 @@ def _find_config_path(path: str = "config.yaml") -> Optional[str]:
 
 def save_config(cfg: AppConfig, path: str = "config.yaml") -> None:
     """Persist an AppConfig back to the YAML file it was loaded from.
-    If no config.yaml exists yet, creates one at the project root."""
+    If no config.yaml exists yet, creates one at the NETWORK_TRACER_CONFIG path
+    (if set) or at the project root."""
     config_path = _find_config_path(path)
     if not config_path:
-        # First save — create the file at the project root (parent of backend/).
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        config_path = os.path.join(project_root, path)
+        # First save — respect env var (e.g. Docker named-volume path) before
+        # falling back to the project root next to backend/.
+        env_path = os.environ.get("NETWORK_TRACER_CONFIG")
+        if env_path:
+            config_path = env_path
+            parent = os.path.dirname(config_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+        else:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(project_root, path)
         logger.info("Creating new config.yaml at %s", config_path)
     # Exclude None optional sections so the YAML stays clean
     data = cfg.model_dump(exclude_none=True)

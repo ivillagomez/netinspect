@@ -594,8 +594,8 @@ async def put_settings(request: Request):
 
     try:
         save_config(new_cfg)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not write configuration: {e}")
 
     reset_config()          # force reload on next request
     global _tracer
