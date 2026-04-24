@@ -524,6 +524,16 @@ function _collectSettings() {
 let _discController = null;    // AbortController for the active discovery
 let _discDevices    = [];       // devices received in the "done" event
 
+function discUpdateProtocolFields() {
+  const proto = document.getElementById('disc_protocol')?.value || 'ssh';
+  const showSsh  = proto === 'ssh'  || proto === 'both';
+  const showSnmp = proto === 'snmp' || proto === 'both';
+  const sshEl  = document.getElementById('disc_ssh_fields');
+  const snmpEl = document.getElementById('disc_snmp_fields');
+  if (sshEl)  sshEl.style.display  = showSsh  ? '' : 'none';
+  if (snmpEl) snmpEl.style.display = showSnmp ? '' : 'none';
+}
+
 async function startDiscovery() {
   const seedIp = document.getElementById('disc_seed_ip')?.value.trim();
   if (!seedIp) {
@@ -547,18 +557,25 @@ async function startDiscovery() {
   stopBtn.style.display = '';
 
   // Build request body
-  const usernameOvr    = document.getElementById('disc_username')?.value.trim();
-  const passwordOvr    = document.getElementById('disc_password')?.value.trim();
+  const protocol     = document.getElementById('disc_protocol')?.value || 'ssh';
+  const usernameOvr  = document.getElementById('disc_username')?.value.trim();
+  const passwordOvr  = document.getElementById('disc_password')?.value.trim();
   const body = {
-    seed_ip:    seedIp,
-    scope:      document.getElementById('disc_scope')?.value.trim() || '',
-    max_depth:  parseInt(document.getElementById('disc_depth')?.value) || 5,
+    seed_ip:   seedIp,
+    scope:     document.getElementById('disc_scope')?.value.trim() || '',
+    max_depth: parseInt(document.getElementById('disc_depth')?.value) || 5,
+    protocol,
     credentials: (usernameOvr && passwordOvr) ? {
       username:    usernameOvr,
       password:    passwordOvr,
       device_type: document.getElementById('disc_device_type')?.value || 'cisco_ios',
       timeout:     15,
     } : {},
+    snmp: {
+      community: document.getElementById('disc_snmp_community')?.value.trim() || 'public',
+      port:      parseInt(document.getElementById('disc_snmp_port')?.value) || 161,
+      version:   document.getElementById('disc_snmp_version')?.value || '2c',
+    },
   };
 
   // Use fetch + ReadableStream for SSE (works with API key header that EventSource can't send)

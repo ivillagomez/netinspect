@@ -236,24 +236,61 @@
                   <input id="disc_depth" type="number" value="5" min="1" max="10">
                 </div>
               </div>
-              <p class="settings-hint" style="margin-top:2px">Uses <strong>Switch Authentication</strong> credentials above. Leave both blank to use those.</p>
-              <div class="settings-grid-3">
-                <div class="settings-field">
-                  <label>Username override</label>
-                  <input id="disc_username" type="text" autocomplete="off" spellcheck="false" placeholder="from Switch Auth">
-                </div>
-                <div class="settings-field">
-                  <label>Password override</label>
-                  <input id="disc_password" type="password" autocomplete="new-password" placeholder="from Switch Auth">
-                </div>
+              <!-- Protocol selector -->
+              <div class="settings-grid-3" style="margin-top:4px">
                 <div class="settings-field settings-field--sm">
-                  <label>Driver</label>
-                  <select id="disc_device_type">
-                    <option value="cisco_ios">cisco_ios</option>
-                    <option value="cisco_xe">cisco_xe</option>
-                    <option value="aruba_os">aruba_os</option>
-                    <option value="aruba_osix">aruba_osix</option>
+                  <label>Protocol</label>
+                  <select id="disc_protocol" onchange="discUpdateProtocolFields()">
+                    <option value="ssh">SSH (CDP / LLDP CLI)</option>
+                    <option value="snmp">SNMP (CDP-MIB / LLDP-MIB)</option>
+                    <option value="both">SNMP + SSH fallback</option>
                   </select>
+                </div>
+              </div>
+
+              <!-- SSH credential fields -->
+              <div id="disc_ssh_fields">
+                <p class="settings-hint" style="margin-top:6px">Uses <strong>Switch Authentication</strong> credentials above. Leave both blank to use those.</p>
+                <div class="settings-grid-3">
+                  <div class="settings-field">
+                    <label>Username override</label>
+                    <input id="disc_username" type="text" autocomplete="off" spellcheck="false" placeholder="from Switch Auth">
+                  </div>
+                  <div class="settings-field">
+                    <label>Password override</label>
+                    <input id="disc_password" type="password" autocomplete="new-password" placeholder="from Switch Auth">
+                  </div>
+                  <div class="settings-field settings-field--sm">
+                    <label>Driver</label>
+                    <select id="disc_device_type">
+                      <option value="cisco_ios">cisco_ios</option>
+                      <option value="cisco_xe">cisco_xe</option>
+                      <option value="aruba_os">aruba_os</option>
+                      <option value="aruba_osix">aruba_osix</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SNMP credential fields -->
+              <div id="disc_snmp_fields" style="display:none">
+                <p class="settings-hint" style="margin-top:6px">No SSH needed — uses SNMP to read CDP-MIB (Cisco) or LLDP-MIB (all vendors). Requires <code>puresnmp</code> installed.</p>
+                <div class="settings-grid-3">
+                  <div class="settings-field">
+                    <label>Community string</label>
+                    <input id="disc_snmp_community" type="text" autocomplete="off" spellcheck="false" placeholder="public">
+                  </div>
+                  <div class="settings-field settings-field--sm">
+                    <label>Port</label>
+                    <input id="disc_snmp_port" type="number" value="161">
+                  </div>
+                  <div class="settings-field settings-field--sm">
+                    <label>Version</label>
+                    <select id="disc_snmp_version">
+                      <option value="2c">SNMPv2c</option>
+                      <option value="1">SNMPv1</option>
+                    </select>
+                  </div>
                 </div>
               </div>
               <button class="disc-start-btn" id="discStartBtn" onclick="startDiscovery()">

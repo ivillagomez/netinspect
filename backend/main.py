@@ -261,11 +261,14 @@ async def discover(request: Request):
     """Stream CDP/LLDP discovery progress as Server-Sent Events.
 
     Request body:
-      seed_ip     str   — starting device IP
-      scope       str   — comma-separated CIDRs to stay inside (blank = allow all)
-      max_depth   int   — recursion depth limit (default 5)
+      seed_ip     str    — starting device IP
+      scope       str    — comma-separated CIDRs (blank = allow all)
+      max_depth   int    — recursion depth limit (default 5)
+      protocol    str    — "ssh" | "snmp" | "both"  (default "ssh")
       credentials object — {username, password, device_type, timeout}
-                           Falls back to switch_credentials from config when omitted.
+                           SSH only; falls back to switch_credentials from config.
+      snmp        object — {community, port, version}
+                           SNMP only; community defaults to "public".
     """
     body = await request.json()
 
@@ -273,40 +276,60 @@ async def discover(request: Request):
     scope_raw = (body.get("scope")   or "").strip()
     max_depth = min(int(body.get("max_depth", 5)), 10)
     scope     = [s.strip() for s in scope_raw.split(",") if s.strip()] if scope_raw else []
+    protocol  = (body.get("protocol") or "ssh").strip().lower()
+    if protocol not in ("ssh", "snmp", "both"):
+        protocol = "ssh"
 
     if not seed_ip:
         raise HTTPException(status_code=400, detail="seed_ip is required")
 
-    # Resolve credentials: request body overrides global switch_credentials
-    creds_body = body.get("credentials") or {}
-    if creds_body.get("username") and creds_body.get("password"):
-        username    = creds_body["username"]
-        password    = creds_body["password"]
-        device_type = creds_body.get("device_type", "cisco_ios")
-        timeout     = int(creds_body.get("timeout", 15))
-    else:
-        cfg = load_config()
-        gc  = cfg.switch_credentials
-        if not gc or not gc.username or not gc.password:
-            raise HTTPException(
-                status_code=400,
-                detail="No credentials provided and no switch_credentials configured."
-            )
-        username    = gc.username
-        password    = gc.password
-        device_type = gc.device_type or "cisco_ios"
-        timeout     = gc.timeout or 15
+    # ── SSH credentials ────────────────────────────────────────────────────────
+    username = password = device_type = ""
+    timeout  = 15
+    if protocol in ("ssh", "both"):
+        creds_body = body.get("credentials") or {}
+        if creds_body.get("username") and creds_body.get("password"):
+            username    = creds_body["username"]
+            password    = creds_body["password"]
+            device_type = creds_body.get("device_type", "cisco_ios")
+            timeout     = int(creds_body.get("timeout", 15))
+        else:
+            cfg = load_config()
+            gc  = cfg.switch_credentials
+            if not gc or not gc.username or not gc.password:
+                if protocol == "ssh":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No SSH credentials provided and no switch_credentials configured."
+                    )
+                # "both" with no SSH creds → degrade to SNMP only
+                protocol = "snmp"
+            else:
+                username    = gc.username
+                password    = gc.password
+                device_type = gc.device_type or "cisco_ios"
+                timeout     = gc.timeout or 15
+
+    # ── SNMP credentials ───────────────────────────────────────────────────────
+    snmp_body      = body.get("snmp") or {}
+    snmp_community = (snmp_body.get("community") or "public").strip()
+    snmp_port      = int(snmp_body.get("port", 161))
+    snmp_version   = (snmp_body.get("version") or "2c").strip()
 
     async def event_stream():
         try:
             async for event in discover_from_seed(
-                seed_ip     = seed_ip,
-                username    = username,
-                password    = password,
-                device_type = device_type,
-                scope       = scope,
-                max_depth   = max_depth,
-                timeout     = timeout,
+                seed_ip        = seed_ip,
+                username       = username,
+                password       = password,
+                device_type    = device_type,
+                scope          = scope,
+                max_depth      = max_depth,
+                timeout        = timeout,
+                protocol       = protocol,
+                snmp_community = snmp_community,
+                snmp_port      = snmp_port,
+                snmp_version   = snmp_version,
             ):
                 yield event.to_sse()
                 await asyncio.sleep(0)   # yield control so client receives events promptly
