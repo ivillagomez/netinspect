@@ -121,7 +121,11 @@ flowchart LR
     subgraph Server["Server — Unraid / VM / Windows PC"]
         FE[Frontend\nHTML · CSS · JS\nStatic files]
         API[FastAPI Backend\nPython 3.11\nPort 8080]
+        DISC[Discovery Engine\nbackend/discovery/\nCDP/LLDP BFS walk]
+        SAPI[Settings API\nGET/PUT /api/settings\nRead-write config.yaml]
         FE <-->|Same process| API
+        API --- DISC
+        API --- SAPI
     end
 
     subgraph Connectors["Connectors (all optional)"]
@@ -420,6 +424,15 @@ Copy `config.yaml.example` (included in the repo) to `config.yaml` and remove or
 All top-level sections except `server` are optional. The tool will start and function correctly with only the sections relevant to your environment.
 
 ```yaml
+# ── Global Switch Credentials (optional) ─────────────────────────────────────
+# Shared TACACS username/password used by all SSH switches that do not have
+# their own username/password set. Omit per-switch credentials to inherit these.
+switch_credentials:
+  username: "svc-netinspect"
+  password: "YOUR_TACACS_PASSWORD"
+  device_type: "cisco_ios"   # default Netmiko driver for discovered switches
+  timeout: 30
+
 # ── FortiGate (optional) ─────────────────────────────────────────────────────
 # Remove this entire section if you have no FortiGate firewall.
 # Without FortiGate, only MAC address and IP address inputs are supported.
@@ -433,21 +446,23 @@ fortigate:
   ssh_port: 22
 
 # ── Cisco Switches (optional) ─────────────────────────────────────────────────
+# username/password are optional per switch — omit to use switch_credentials
 cisco_switches:
   - name: "SW-Core"
     host: "192.168.1.x"
-    username: "YOUR_SSH_USERNAME"
-    password: "YOUR_SSH_PASSWORD"
+    # username: "YOUR_SSH_USERNAME"   # omit to inherit from switch_credentials
+    # password: "YOUR_SSH_PASSWORD"   # omit to inherit from switch_credentials
     device_type: "cisco_ios"
     timeout: 30
     # snmp_community: "public"   # optional SNMP fast-path
 
 # ── Aruba Switches (optional) ─────────────────────────────────────────────────
+# username/password are optional per switch — omit to use switch_credentials
 aruba_switches:
   - name: "Aruba-Core"
     host: "192.168.1.x"
-    username: "YOUR_SSH_USERNAME"
-    password: "YOUR_SSH_PASSWORD"
+    # username: "YOUR_SSH_USERNAME"   # omit to inherit from switch_credentials
+    # password: "YOUR_SSH_PASSWORD"   # omit to inherit from switch_credentials
     os_type: "aruba_os"     # "aruba_os" (2930/2930F/2930M) or "aruba_osix" (6000/6100)
     timeout: 30
 
@@ -474,10 +489,19 @@ extreme_iq:
 server:
   host: "0.0.0.0"
   port: 8080
-  api_key: ""    # optional: set to require X-API-Key header on all API calls
+  api_key: ""             # optional: require X-API-Key header on all API calls
+  allowed_origins: []     # blank = allow all; restrict for non-LAN deployments
 ```
 
 ---
+
+### Global switch credentials (`switch_credentials`)
+
+The `switch_credentials` section defines a single TACACS username and password shared across all SSH switches. Any switch in `cisco_switches` or `aruba_switches` that does **not** have its own `username` and `password` fields set will use these credentials at runtime.
+
+Per-switch `username` and `password` fields are optional. When set, they take priority over `switch_credentials`. When omitted, they are never written into the switch entry — the global fallback is applied at connection time.
+
+This is the recommended pattern when all switches share a single TACACS service account.
 
 ### Cisco switches — `device_type` values
 
@@ -502,8 +526,6 @@ When `snmp_community` is set on a Cisco switch entry, the tool uses SNMP (via pu
 cisco_switches:
   - name: "SW-Core"
     host: "192.168.1.x"
-    username: "admin"
-    password: "secret"
     device_type: "cisco_ios"
     timeout: 30
     snmp_community: "public"    # enables SNMP fast-path
@@ -605,8 +627,37 @@ Click the **gear icon** below the search bar to expand the diagnostics panel. To
 | **Spanning Tree** | Role and state per port |
 | **PoE Status** | Power delivery and budget |
 | **Neighbor Info** | Per-port CDP/LLDP connected device name and port |
+| **System Logs** | Recent error/warning syslog entries (`show logging`) |
 
 Disabling options speeds up traces and reduces SSH commands on the switches.
+
+### Settings UI
+
+Click the **gear icon in the footer** to open the Settings modal. Settings are organized into accordion sections:
+
+| Section | What you can configure |
+|---|---|
+| **Switch Authentication** | Global TACACS username and password (`switch_credentials`) shared across all SSH switches |
+| **Discover from Seed** | Start a CDP/LLDP BFS walk from a seed IP to automatically find switches |
+| **Cisco Switches** | Add, edit, or remove Cisco switch inventory rows |
+| **Aruba Switches** | Add, edit, or remove Aruba switch inventory rows |
+| **FortiGate** | Host, API token, optional SSH credentials |
+| **Cloud APIs** | Ruckus One, Aruba Central, and ExtremeCloud IQ credentials |
+| **Server** | Port, optional API key, allowed CORS origins |
+
+Click **Save** to write all changes back to `config.yaml` via `PUT /api/settings`. Masked credential fields (shown as `••••••••`) are preserved from disk when saved — they are never overwritten with the masked placeholder.
+
+#### CDP/LLDP Auto-Discovery workflow
+
+1. Open Settings → **Discover from Seed**
+2. Enter a seed IP (typically your core switch), scope CIDR (e.g. `10.0.0.0/8`), and max depth
+3. Click **Start Discovery** — the panel streams live progress with depth-indented device names
+4. Use the **Stop** button to cancel at any time
+5. Discovered devices appear in a checklist — select the ones you want and click **Add selected to inventory**
+6. Selected switches are added to the Cisco or Aruba switch lists without duplicates
+7. Click **Save** to write the updated inventory to `config.yaml`
+
+The discovery engine walks CDP neighbors first, falls back to LLDP, and skips access points, routers, and firewalls from recursion. It uses `switch_credentials` for all SSH connections during the walk.
 
 ### Reading results
 
@@ -633,6 +684,14 @@ Disabling options speeds up traces and reduces SSH commands on the switches.
 - FortiGate egress interface statistics (when SSH configured)
 - Ruckus AP wired uplink shown as ETH0 when no explicit port is returned
 
+### Dark/light theme
+
+Click the **sun/moon button in the footer** to toggle between dark and light themes. The selected theme persists across sessions via `localStorage`.
+
+### Version display
+
+The footer displays the current application version, read at runtime from `GET /api/ui-config`. The `VERSION` file at the project root is the single source of truth for the version number.
+
 ---
 
 ## 9. Troubleshooting
@@ -651,7 +710,7 @@ Disabling options speeds up traces and reduces SSH commands on the switches.
 - Verify SSH is enabled: `show ip ssh` on the switch
 - Test connectivity from the server: `ssh <username>@<switch-ip>`
 - Check no ACL is blocking SSH from the tool's IP
-- Confirm credentials in `config.yaml` are correct
+- Confirm credentials in `config.yaml` are correct (or that `switch_credentials` is set if per-switch credentials are omitted)
 
 ### Aruba switch shows as "Unreachable"
 - Confirm `os_type` is correct for your switch series (`aruba_os` for 2930/2930F/2930M, `aruba_osix` for 6000/6100)
@@ -694,6 +753,11 @@ Disabling options speeds up traces and reduces SSH commands on the switches.
 - Ensure the account has Operator role or higher (read-only accounts with insufficient permissions will return empty results)
 - Confirm `base_url` is `https://extremecloudiq.com` (or your regional endpoint if applicable)
 
+### Settings not saving
+- Verify `PUT /api/settings` is reachable — if `server.api_key` is set, include the `X-API-Key` header in the Settings UI
+- Check that the process has write permission to `config.yaml`
+- If running in Docker with `config.yaml` mounted as read-only (`:ro`), remove the read-only flag: use `-v .../config.yaml:/app/config.yaml` without `:ro`
+
 ### Port 8080 already in use
 Edit `config.yaml`, change `server.port` to another value (e.g. `8090`), restart.
 
@@ -704,6 +768,7 @@ Edit `config.yaml`, change `server.port` to another value (e.g. `8090`), restart
 ```
 netinspect/
 │
+├── VERSION                      ← Single source of truth for version number (e.g. 1.1.0)
 ├── config.yaml                  ← Your credentials — gitignored, never committed
 ├── config.yaml.example          ← Template with all sections; copy to config.yaml
 ├── run.py                       ← Entry point: starts the uvicorn server
@@ -712,7 +777,7 @@ netinspect/
 ├── docker-compose.yml           ← Docker Compose deployment
 │
 ├── backend/
-│   ├── main.py                  ← FastAPI app + routes + /api/capabilities endpoint
+│   ├── main.py                  ← FastAPI app + routes + security headers middleware
 │   ├── config.py                ← Config loader (YAML → Pydantic models)
 │   ├── models.py                ← Pydantic data models (Hop, Issue, TraceResult…)
 │   │
@@ -726,23 +791,34 @@ netinspect/
 │   │   ├── extreme_iq.py        ← ExtremeCloud IQ cloud API: client lookup
 │   │   └── ruckus_r1.py         ← Ruckus One REST: APs, managed switches, wireless clients (OAuth2)
 │   │
+│   ├── discovery/
+│   │   ├── __init__.py          ← Package init
+│   │   └── cdp_lldp.py          ← CDP/LLDP BFS discovery engine; streams DiscoveryEvent SSE objects
+│   │
 │   └── tracer/
 │       ├── resolver.py          ← Parses MAC / IP / FortiGate address name input
 │       ├── mac_tracer.py        ← Core engine: chain-walk topology + path building
 │       └── diagnostics.py       ← Per-hop health checks returning (issues, tests) tuples
 │
 └── frontend/
-    ├── index.html               ← Single-page app shell + diagnostics options panel
-    ├── css/style.css            ← Dark glassmorphism theme
-    └── js/app.js                ← UI: capabilities check, trace, path render, hop cards, tests summary
+    ├── index.html               ← Single-page app shell + diagnostics options panel + settings modal
+    ├── css/style.css            ← Dark/light glassmorphism theme
+    └── js/app.js                ← UI: capabilities check, trace, path render, hop cards, tests summary,
+                                    settings modal, discovery workflow, theme toggle
 ```
 
 ### API endpoints
 
 | Endpoint | Auth | Description |
 |---|---|---|
-| `GET /api/capabilities` | None | Returns which integrations are configured. Used at page load to adapt the UI. |
-| `POST /api/trace` | Optional API key | Runs a full trace. Body: `{ "query": "...", "options": {...} }` |
+| `GET /api/health` | None | `{"status": "ok"}` |
+| `GET /api/capabilities` | None | Which integrations are configured; used at page load to adapt the UI |
+| `GET /api/ui-config` | None | `{"version": "1.1.0", "api_key_required": bool}`; footer reads this at runtime |
+| `GET /api/settings` | Optional API key | Full config with secrets masked as `••••••••` |
+| `PUT /api/settings` | Optional API key | Save updated config; masked values are preserved from disk |
+| `POST /api/discover` | Optional API key | SSE stream of CDP/LLDP BFS discovery events from a seed IP |
+| `POST /api/trace` | Optional API key | Run a full network path trace. Body: `{"query": "...", "options": {...}}` |
+| `GET /api/devices` | Optional API key | Configured device names for status overview |
 
 The `/api/capabilities` response shape:
 
@@ -783,7 +859,10 @@ diagnostics.py       Per-hop checks gated by DiagnosticOptions
 TraceResult JSON     Returned to frontend
 
 app.js               Reads /api/capabilities at load, adapts UI
+                     Reads /api/ui-config for version display
                      Renders path nodes, hop cards, issues panel, test summary
+                     Settings modal reads GET /api/settings, writes PUT /api/settings
+                     Discovery workflow streams POST /api/discover SSE events
 ```
 
 ---
@@ -826,7 +905,35 @@ If earlier development commits included real credentials before `.gitignore` was
 
 ### Optional API key for the web UI
 
-Set `server.api_key` in `config.yaml` to require an `X-API-Key` header on all backend API calls. Useful when the tool is exposed beyond a trusted LAN segment. The `/api/capabilities` endpoint is always unauthenticated (it contains no credentials).
+Set `server.api_key` in `config.yaml` to require an `X-API-Key` header on all backend API calls. Useful when the tool is exposed beyond a trusted LAN segment. The `/api/capabilities`, `/api/health`, and `/api/ui-config` endpoints are always unauthenticated (they contain no credentials or sensitive data).
+
+### Security hardening (v1.1.0)
+
+The following security controls are active by default:
+
+- **XSS prevention** — all dynamic HTML rendered via `esc()` escaping in the frontend
+- **Constant-time API key comparison** — `hmac.compare_digest` prevents timing-based key enumeration
+- **SSH injection prevention** — `_safe_port()` validates port values in all SSH connectors
+- **Masked secrets in Settings API** — credentials are returned as `••••••••` and masked values are never written back to disk
+- **Generic error messages** — exception handlers return generic messages with no credential context
+- **Security response headers** — `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Content-Security-Policy` set on all responses via middleware
+- **CORS lockdown** — set `server.allowed_origins` in `config.yaml` to restrict cross-origin access for non-LAN deployments; blank allows all origins
+- **`verify_ssl: false` warning** — logged at startup when SSL verification is disabled for FortiGate
+
+### MFA / TACACS
+
+Automated SSH via Netmiko is incompatible with interactive MFA (Duo push, TOTP, RSA token). MFA requires a human to respond mid-handshake; automated sessions hang waiting for a second factor.
+
+**Recommended approach:** Create a dedicated service account (`svc-netinspect`) in your TACACS server that is MFA-exempt. Apply the following compensating controls:
+
+- Read-only privilege level (`privilege 1` on Cisco, Operator on Aruba) — `show` commands only, no `configure terminal`
+- Source IP restriction to the NetInspect server only
+- Session logging enabled in TACACS for all connections from this account
+- Quarterly access review
+
+This is standard practice for all network automation tools (Ansible, NSO, SolarWinds, PRTG). The `switch_credentials` section in `config.yaml` is designed for exactly this service account pattern — one set of credentials shared across all switches.
+
+If your organization cannot exempt any account from MFA, alternatives include SNMP v3 for counters and status (already partially implemented via the optional SNMP fast-path) or per-switch REST APIs on modern IOS-XE and Aruba CX platforms.
 
 ### Minimum required permissions
 
@@ -880,9 +987,17 @@ No inbound ports are needed other than `8080` for the web UI.
 | Fully modular / vendor-agnostic config (all sections optional) | Done |
 | Two-pass ARP resolution from switches (no FortiGate required) | Done |
 | /api/capabilities endpoint for UI adaptation | Done |
+| Dark/light theme toggle with localStorage persistence | Done |
+| System Logs diagnostic option (`show logging`) | Done |
+| Dynamic versioning via VERSION file + /api/ui-config | Done |
+| Web-based Settings UI (gear icon, accordion sections, save to config.yaml) | Done |
+| Global switch credentials (`switch_credentials`) with per-switch override | Done |
+| CDP/LLDP Auto-Discovery (BFS walk, SSE progress stream, add to inventory) | Done |
+| Security hardening (XSS, timing-safe key compare, SSH injection, CSP headers) | Done |
 | Export trace to PDF / CSV | Planned |
 | Saved trace history / comparison | Planned |
 | FortiAnalyzer log correlation | Planned |
 | Email / Teams alert on critical issues | Planned |
 | Palo Alto firewall support | Planned |
-| Auto-discover switch inventory from CDP/LLDP | Planned |
+| RESTCONF / NETCONF device API support (alternative to SSH for modern IOS-XE / Aruba CX) | Planned |
+| SSH connection pooling (reuse connections across concurrent traces) | Planned |
