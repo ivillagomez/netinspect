@@ -1,7 +1,10 @@
 import yaml
 import os
+import logging
 from typing import List, Optional
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class SwitchCredentials(BaseModel):
@@ -126,12 +129,16 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     ]
     config_path = next((p for p in candidates if os.path.isfile(p)), None)
     if not config_path:
-        raise FileNotFoundError(
-            f"config.yaml not found. Searched: {candidates}\n"
-            "Copy config.yaml to the project root and fill in your credentials."
+        # No config file found — start with all defaults.
+        # User can configure via the Settings UI; first Save will create the file.
+        logger.info(
+            "No config.yaml found — starting with default configuration. "
+            "Open the Settings UI to configure your devices and credentials."
         )
+        _config = AppConfig()
+        return _config
     with open(config_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}   # empty file → empty dict → all defaults
     _config = AppConfig(**data)
     return _config
 
@@ -156,13 +163,14 @@ def _find_config_path(path: str = "config.yaml") -> Optional[str]:
 
 
 def save_config(cfg: AppConfig, path: str = "config.yaml") -> None:
-    """Persist an AppConfig back to the YAML file it was loaded from."""
+    """Persist an AppConfig back to the YAML file it was loaded from.
+    If no config.yaml exists yet, creates one at the project root."""
     config_path = _find_config_path(path)
     if not config_path:
-        raise FileNotFoundError(
-            "config.yaml not found — cannot save. "
-            "Ensure the file exists at the project root."
-        )
+        # First save — create the file at the project root (parent of backend/).
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(project_root, path)
+        logger.info("Creating new config.yaml at %s", config_path)
     # Exclude None optional sections so the YAML stays clean
     data = cfg.model_dump(exclude_none=True)
     with open(config_path, "w", encoding="utf-8") as f:

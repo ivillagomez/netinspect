@@ -326,15 +326,13 @@ cd netinspect
 :: 2. Install dependencies
 pip install -r requirements.txt
 
-:: 3. Create your local config from the example template (never commit config.yaml)
-copy config.yaml.example config.yaml
-:: Edit config.yaml with Notepad++ or VS Code — fill in your credentials
-
-:: 4. Run the server
+:: 3. Run the server
 python run.py
 ```
 
 Open: **http://localhost:8080**
+
+Click the **gear icon (top right) → Settings** to enter your device credentials. Changes are saved to `config.yaml` automatically.
 
 To share with others on the LAN: `http://<your-windows-ip>:8080`
 Find your IP with `ipconfig` in CMD.
@@ -357,28 +355,26 @@ Find your IP with `ipconfig` in CMD.
 cd /mnt/user/appdata
 git clone https://github.com/ivillagomez/netinspect.git
 
-# 3. Create and edit your local config from the example template
+# 3. Build the Docker image (~2 min first time)
 cd netinspect
-cp config.yaml.example config.yaml   # start from the template
-nano config.yaml                     # fill in your real credentials
-# Ctrl+O → Enter → Ctrl+X to save
-
-# 4. Build the Docker image (~2 min first time)
+touch config.yaml                    # ensures Docker mounts a file, not a directory
 docker build -t netinspect:latest .
 
-# 5. Start the container
+# 4. Start the container
 docker run -d \
   --name netinspect \
   --restart unless-stopped \
   -p 8080:8080 \
-  -v /mnt/user/appdata/netinspect/config.yaml:/app/config.yaml:ro \
+  -v /mnt/user/appdata/netinspect/config.yaml:/app/config.yaml \
   netinspect:latest
 
-# 6. Verify it's running
+# 5. Verify it's running
 docker ps | grep netinspect
 ```
 
 Open from any LAN machine: **http://\<unraid-ip\>:8080**
+
+Click the **gear icon (top right) → Settings** to enter your device credentials. Changes are saved back to `config.yaml` on the host automatically.
 
 #### Managing via Unraid Docker UI
 
@@ -408,11 +404,10 @@ docker restart netinspect
 # 1. Install Docker
 curl -fsSL https://get.docker.com | sh
 
-# 2. Clone + configure
+# 2. Clone
 git clone https://github.com/ivillagomez/netinspect.git
 cd netinspect
-cp config.yaml.example config.yaml
-nano config.yaml    # fill in credentials
+touch config.yaml    # ensures Docker mounts a file, not a directory
 
 # 3. Build and run
 docker build -t netinspect:latest .
@@ -420,9 +415,11 @@ docker run -d \
   --name netinspect \
   --restart unless-stopped \
   -p 8080:8080 \
-  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v $(pwd)/config.yaml:/app/config.yaml \
   netinspect:latest
 ```
+
+Open **http://\<vm-ip\>:8080** and use the Settings UI (gear icon, top right) to configure credentials.
 
 ---
 
@@ -431,21 +428,23 @@ docker run -d \
 ```bash
 git clone https://github.com/ivillagomez/netinspect.git
 cd netinspect
-cp config.yaml.example config.yaml
-nano config.yaml         # fill in credentials
+touch config.yaml        # ensures Docker mounts a file, not a directory
 
 docker compose up -d --build     # start
 docker compose down              # stop
 ```
+
+Open **http://localhost:8080** and use the Settings UI (gear icon, top right) to configure credentials.
 
 ---
 
 ## 7. Configuration Reference
 
 `config.yaml` lives in the project root and is **excluded from git** (see [Section 11](#11-security-notes)).
-Copy `config.yaml.example` (included in the repo) to `config.yaml` and remove or comment out any sections you do not need.
 
-All top-level sections except `server` are optional. The tool will start and function correctly with only the sections relevant to your environment.
+The easiest way to configure the tool is via the **Settings UI** (gear icon, top right) — credentials are written to `config.yaml` automatically on Save, and the file is created if it does not yet exist. Alternatively, copy `config.yaml.example` to `config.yaml` and edit it manually.
+
+All top-level sections except `server` are optional. The tool starts and functions correctly with an empty or absent `config.yaml` — only the sections relevant to your environment need to be filled in.
 
 ```yaml
 # ── Global Switch Credentials (optional) ─────────────────────────────────────
@@ -1006,9 +1005,10 @@ The `config.yaml.example` file in the repository contains only placeholder value
 
 When deploying:
 1. Clone the repo
-2. Copy `config.yaml.example` to `config.yaml`
-3. Edit `config.yaml` locally with your real credentials
-4. It will not be tracked by git
+2. For Docker: run `touch config.yaml` so the volume mount binds a file (not a directory)
+3. Start the server — it runs with all defaults if `config.yaml` is empty or absent
+4. Open the Settings UI (gear icon, top right) to enter credentials — they are saved to `config.yaml` automatically
+5. `config.yaml` is never tracked by git
 
 At startup, the application checks `config.yaml` file permissions and logs a warning if the file is readable by group or world. On Linux/Docker deployments, set `chmod 600 config.yaml` to restrict access to the process owner only.
 
