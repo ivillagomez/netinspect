@@ -1286,7 +1286,7 @@ function buildHopCard(hop, idx) {
       if (allZero && s.mtu) {
         body.innerHTML += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
           ℹ️ Software or zone interface — traffic counters not maintained by the OS.
-          ${s.mtu ? `MTU: ${s.mtu} bytes.` : ''}
+          ${s.mtu ? `MTU: ${esc(String(s.mtu))} bytes.` : ''}
         </div>`;
       } else {
         body.appendChild(buildDetailGrid([

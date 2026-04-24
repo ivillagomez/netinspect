@@ -13,6 +13,14 @@ def normalize_mac(mac: str) -> str:
     return re.sub(r"[.:\-]", "", mac).lower()
 
 
+# L1: allowlist for FortiGate address object names.
+# Prevents filter injection (e.g. user typing "*" to enumerate all objects)
+# and path traversal in /cmdb/firewall/address/<name>.
+# FortiGate address names may contain letters, digits, hyphens, underscores,
+# spaces, dots, and parentheses — nothing that would alter the API filter syntax.
+_FG_ADDR_NAME_RE = re.compile(r'^[\w\-. ()]{1,64}$')
+
+
 def mac_to_colon(mac: str) -> str:
     m = normalize_mac(mac)
     return ":".join(m[i : i + 2] for i in range(0, 12, 2))
@@ -59,6 +67,9 @@ class FortiGateClient:
 
     async def resolve_address_name(self, name: str) -> Optional[str]:
         """Resolve a FortiGate address object name to its IP/subnet."""
+        if not _FG_ADDR_NAME_RE.match(name):
+            logger.warning("FortiGate address name rejected (invalid chars): %r", name[:80])
+            return None
         data = await self._get(f"/cmdb/firewall/address/{name}")
         if not data:
             return None
@@ -75,6 +86,9 @@ class FortiGateClient:
 
     async def search_address_names(self, query: str) -> List[Dict]:
         """Search address objects by name prefix."""
+        if not _FG_ADDR_NAME_RE.match(query):
+            logger.warning("FortiGate address search rejected (invalid chars): %r", query[:80])
+            return []
         data = await self._get("/cmdb/firewall/address", {"filter": f"name=@{query}"})
         if not data:
             return []

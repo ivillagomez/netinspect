@@ -5,13 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NetInspect</title>
   <link rel="stylesheet" href="/static/css/style.css" />
-  <!-- Apply saved theme before first paint to prevent flash -->
-  <script>
-    (function(){
-      var t = localStorage.getItem('netinspect_theme');
-      if (t === 'light') document.documentElement.setAttribute('data-theme','light');
-    })();
-  </script>
+  <!-- Apply saved theme before first paint to prevent flash (no defer — must block render) -->
+  <script src="/static/js/theme-init.js"></script>
 </head>
 <body>
   <div class="app">

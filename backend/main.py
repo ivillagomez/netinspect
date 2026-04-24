@@ -66,6 +66,10 @@ class _RateLimiter:
             while q and q[0] < now - self._win:
                 q.popleft()
             if len(q) >= self._max:
+                # L2: prune empty dict entry so the dict doesn't grow
+                # unboundedly when scanned by many unique IPs.
+                if not q:
+                    del self._calls[key]
                 return False
             q.append(now)
             return True
@@ -124,13 +128,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        # Self-hosted SPA: allow inline styles/scripts (no CDN deps needed)
+        # M1: script-src no longer uses 'unsafe-inline'.
+        # The one inline script (theme init) was extracted to theme-init.js.
+        # style-src keeps 'unsafe-inline' because the JS renderer uses inline
+        # style="" attributes; removing it would require a full CSS-class refactor
+        # and inline styles are not a meaningful XSS vector in modern browsers.
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "object-src 'none'"
+        )
+        # L7: restrict browser features the app never uses
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
         )
         return response
 
@@ -148,7 +160,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["X-API-Key", "Content-Type"],
 )
 
@@ -341,11 +353,17 @@ async def discover(request: Request):
 
     seed_ip   = (body.get("seed_ip") or "").strip()
     scope_raw = (body.get("scope")   or "").strip()
-    max_depth = min(int(body.get("max_depth", 5)), 10)
     scope     = [s.strip() for s in scope_raw.split(",") if s.strip()] if scope_raw else []
     protocol  = (body.get("protocol") or "ssh").strip().lower()
     if protocol not in ("ssh", "snmp", "both"):
         protocol = "ssh"
+
+    # M3: validate integer fields — return 400 instead of letting ValueError
+    # bubble up as an opaque 500 error.
+    try:
+        max_depth = min(int(body.get("max_depth", 5)), 10)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="max_depth must be an integer")
 
     if not seed_ip:
         raise HTTPException(status_code=400, detail="seed_ip is required")
@@ -365,7 +383,10 @@ async def discover(request: Request):
             username    = creds_body["username"]
             password    = creds_body["password"]
             device_type = creds_body.get("device_type", "cisco_ios")
-            timeout     = int(creds_body.get("timeout", 15))
+            try:
+                timeout = int(creds_body.get("timeout", 15))
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="credentials.timeout must be an integer")
         else:
             cfg = load_config()
             gc  = cfg.switch_credentials
@@ -386,7 +407,10 @@ async def discover(request: Request):
     # ── SNMP credentials ───────────────────────────────────────────────────────
     snmp_body      = body.get("snmp") or {}
     snmp_community = (snmp_body.get("community") or "public").strip()
-    snmp_port      = int(snmp_body.get("port", 161))
+    try:
+        snmp_port = int(snmp_body.get("port", 161))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="snmp.port must be an integer")
     snmp_version   = (snmp_body.get("version") or "2c").strip()
 
     async def event_stream():
@@ -492,7 +516,11 @@ async def put_settings(request: Request):
     body_bytes = await request.body()
     if len(body_bytes) > 65_536:   # 64 KB
         raise HTTPException(status_code=413, detail="Request body too large (max 64 KB)")
-    body = json.loads(body_bytes)
+    # M2: explicit catch so malformed JSON returns 400, not 500
+    try:
+        body = json.loads(body_bytes)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e.msg}")
     current = load_config()
 
     # ── FortiGate ──────────────────────────────────────────────────────────────

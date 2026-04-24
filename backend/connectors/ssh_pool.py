@@ -28,6 +28,7 @@ MAX_PER_KEY     = 2      # max pooled connections per (host, user, driver) key
 IDLE_TIMEOUT    = 300    # seconds — close connections idle longer than this
 WAIT_TIMEOUT    = 30     # seconds — max wait before creating an over-limit connection
 WAIT_POLL       = 0.25   # seconds — polling interval while waiting for a free slot
+STUCK_TIMEOUT   = 300    # seconds — L4: forcibly reclaim in_use conns held this long
 
 
 @dataclass
@@ -36,6 +37,7 @@ class _PoolEntry:
     key:           Tuple
     in_use:        bool  = False
     last_released: float = field(default_factory=time.monotonic)
+    last_acquired: float = field(default_factory=time.monotonic)  # L4: leak detection
 
 
 class SshConnectionPool:
@@ -67,7 +69,8 @@ class SshConnectionPool:
                 for entry in pool:
                     if not entry.in_use:
                         if _is_alive(entry.conn):
-                            entry.in_use = True
+                            entry.in_use       = True
+                            entry.last_acquired = time.monotonic()  # L4
                             logger.debug("[pool] reused conn → %s", key[0])
                             return entry.conn
                         else:
@@ -80,7 +83,8 @@ class SshConnectionPool:
                 # 2. Open a new connection if under cap
                 if len(pool) < MAX_PER_KEY:
                     conn  = _open(config)
-                    entry = _PoolEntry(conn=conn, key=key, in_use=True)
+                    entry = _PoolEntry(conn=conn, key=key, in_use=True,
+                                       last_acquired=time.monotonic())  # L4
                     pool.append(entry)
                     logger.debug("[pool] new conn → %s (size=%d)", key[0], len(pool))
                     return conn
@@ -89,7 +93,8 @@ class SshConnectionPool:
                 if time.monotonic() >= deadline:
                     logger.warning("[pool] cap=%d hit for %s — over-limit conn", MAX_PER_KEY, key[0])
                     conn  = _open(config)
-                    entry = _PoolEntry(conn=conn, key=key, in_use=True)
+                    entry = _PoolEntry(conn=conn, key=key, in_use=True,
+                                       last_acquired=time.monotonic())  # L4
                     pool.append(entry)   # tracked so release() can find it
                     return conn
 
@@ -121,16 +126,32 @@ class SshConnectionPool:
 
     def cleanup_idle(self) -> None:
         """Close connections idle for > IDLE_TIMEOUT seconds.
+        Also forcibly reclaims connections that have been in_use for longer
+        than STUCK_TIMEOUT — these are leaked connections whose callers crashed
+        without calling release().
         Should be called periodically (e.g. from a background task).
         """
-        cutoff = time.monotonic() - IDLE_TIMEOUT
+        now = time.monotonic()
+        idle_cutoff  = now - IDLE_TIMEOUT
+        stuck_cutoff = now - STUCK_TIMEOUT   # L4
         with self._lock:
             for key, pool in list(self._pools.items()):
-                to_close = [e for e in pool if not e.in_use and e.last_released < cutoff]
+                # Close genuinely idle connections
+                to_close = [e for e in pool if not e.in_use and e.last_released < idle_cutoff]
                 for entry in to_close:
                     _safe_disconnect(entry.conn)
                     pool.remove(entry)
                     logger.info("[pool] closed idle conn → %s", key[0])
+                # L4: forcibly reclaim connections stuck in_use beyond STUCK_TIMEOUT
+                stuck = [e for e in pool if e.in_use and e.last_acquired < stuck_cutoff]
+                for entry in stuck:
+                    logger.warning(
+                        "[pool] forcibly closing stuck in-use conn → %s "
+                        "(held %.0fs, limit %ds)",
+                        key[0], now - entry.last_acquired, STUCK_TIMEOUT,
+                    )
+                    _safe_disconnect(entry.conn)
+                    pool.remove(entry)
 
     def close_all(self) -> None:
         """Forcibly disconnect all pooled connections.  Called on app shutdown."""
