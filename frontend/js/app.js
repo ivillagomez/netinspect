@@ -520,6 +520,212 @@ function _collectSettings() {
   };
 }
 
+// ── Discovery ─────────────────────────────────────────────────
+let _discController = null;    // AbortController for the active discovery
+let _discDevices    = [];       // devices received in the "done" event
+
+async function startDiscovery() {
+  const seedIp = document.getElementById('disc_seed_ip')?.value.trim();
+  if (!seedIp) {
+    alert('Enter a seed IP address to start discovery.');
+    return;
+  }
+
+  // Reset UI
+  const progress = document.getElementById('discProgress');
+  const results  = document.getElementById('discResults');
+  const log      = document.getElementById('discLog');
+  const startBtn = document.getElementById('discStartBtn');
+  const stopBtn  = document.getElementById('discStopBtn');
+
+  progress.classList.remove('hidden');
+  results.classList.add('hidden');
+  log.innerHTML = '';
+  _discDevices  = [];
+  document.getElementById('discProgressLabel').textContent = 'Discovering…';
+  startBtn.disabled = true;
+  stopBtn.style.display = '';
+
+  // Build request body
+  const usernameOvr    = document.getElementById('disc_username')?.value.trim();
+  const passwordOvr    = document.getElementById('disc_password')?.value.trim();
+  const body = {
+    seed_ip:    seedIp,
+    scope:      document.getElementById('disc_scope')?.value.trim() || '',
+    max_depth:  parseInt(document.getElementById('disc_depth')?.value) || 5,
+    credentials: (usernameOvr && passwordOvr) ? {
+      username:    usernameOvr,
+      password:    passwordOvr,
+      device_type: document.getElementById('disc_device_type')?.value || 'cisco_ios',
+      timeout:     15,
+    } : {},
+  };
+
+  // Use fetch + ReadableStream for SSE (works with API key header that EventSource can't send)
+  _discController = new AbortController();
+  try {
+    const res = await apiFetch('/api/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: _discController.signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      _discLog('error', '', '', err.detail || 'Request failed', 0);
+      startBtn.disabled = false;
+      return;
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();   // keep incomplete last line
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const evt = JSON.parse(line.slice(6));
+            _handleDiscoveryEvent(evt);
+          } catch (_) { /* ignore malformed */ }
+        }
+      }
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError') {
+      _discLog('error', seedIp, '', 'Connection lost: ' + e.message, 0);
+    }
+  } finally {
+    startBtn.disabled = false;
+    stopBtn.style.display = 'none';
+    _discController = null;
+  }
+}
+
+function stopDiscovery() {
+  if (_discController) {
+    _discController.abort();
+    document.getElementById('discProgressLabel').textContent = 'Stopped.';
+  }
+}
+
+function _handleDiscoveryEvent(evt) {
+  const log = document.getElementById('discLog');
+  switch (evt.type) {
+    case 'connecting':
+      _discLog('connecting', evt.ip, '', 'connecting…', evt.depth);
+      break;
+    case 'found':
+      _discLog('found', evt.ip, evt.hostname, evt.platform || evt.device_type, evt.depth);
+      break;
+    case 'skip':
+      _discLog('skip', evt.ip, evt.hostname, evt.reason, evt.depth);
+      break;
+    case 'error':
+      _discLog('error', evt.ip, '', evt.reason, evt.depth);
+      break;
+    case 'done':
+      _discDevices = evt.devices || [];
+      document.getElementById('discProgressLabel').textContent =
+        `Done — ${_discDevices.length} device${_discDevices.length !== 1 ? 's' : ''} found`;
+      _renderDiscoveryResults(_discDevices);
+      break;
+  }
+  // Auto-scroll log
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function _discLog(type, ip, hostname, meta, depth) {
+  const log = document.getElementById('discLog');
+  if (!log) return;
+  const icons = { connecting: '⟳', found: '✓', skip: '·', error: '✗' };
+  const indent = depth > 0 ? `<span style="opacity:.3">${'  '.repeat(Math.min(depth,4))}</span>` : '';
+  const row = document.createElement('div');
+  row.className = `disc-log-row disc-log-row--${type}`;
+  row.innerHTML =
+    `${indent}<span class="disc-log-icon">${icons[type] || '·'}</span>` +
+    `<span class="disc-log-ip">${esc(ip)}</span>` +
+    (hostname ? `<span class="disc-log-host">${esc(hostname)}</span>` : '') +
+    (meta     ? `<span class="disc-log-meta">${esc(meta)}</span>` : '');
+  log.appendChild(row);
+}
+
+function _renderDiscoveryResults(devices) {
+  const container = document.getElementById('discDeviceList');
+  const section   = document.getElementById('discResults');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!devices.length) {
+    section.classList.remove('hidden');
+    document.getElementById('discResultsLabel').textContent = 'No new devices found';
+    return;
+  }
+
+  const seedIp = document.getElementById('disc_seed_ip')?.value.trim();
+  devices.forEach((d, i) => {
+    const isSeed = d.mgmt_ip === seedIp;
+    const row = document.createElement('label');
+    row.className = 'disc-device-row' + (isSeed ? ' disc-device-row--seed' : '');
+    row.innerHTML =
+      `<input type="checkbox" class="disc-check" data-idx="${i}" ${isSeed ? '' : 'checked'}>` +
+      `<span class="disc-device-hostname">${esc(d.hostname || d.mgmt_ip)}</span>` +
+      `<span class="disc-device-ip">${esc(d.mgmt_ip)}</span>` +
+      `<span class="disc-device-type">${esc(d.device_type || 'cisco_ios')}</span>`;
+    container.appendChild(row);
+  });
+
+  document.getElementById('discResultsLabel').textContent =
+    `${devices.length} device${devices.length !== 1 ? 's' : ''} found — select to add`;
+  section.classList.remove('hidden');
+}
+
+function discToggleAll(checked) {
+  document.querySelectorAll('.disc-check').forEach(cb => cb.checked = checked);
+}
+
+function addDiscoveredDevices() {
+  const selected = Array.from(document.querySelectorAll('.disc-check:checked'))
+    .map(cb => _discDevices[parseInt(cb.dataset.idx)])
+    .filter(Boolean);
+
+  if (!selected.length) {
+    alert('No devices selected.');
+    return;
+  }
+
+  // Determine which list to add to based on device_type
+  selected.forEach(d => {
+    const isAruba = (d.device_type || '').startsWith('aruba');
+    const listId  = isAruba ? 'aruba_switches_list' : 'cisco_switches_list';
+    const type    = isAruba ? 'aruba' : 'cisco';
+
+    // Don't add duplicates (check by host)
+    const existing = Array.from(
+      document.querySelectorAll(`#${listId} .sw-host`)
+    ).map(el => el.value.trim());
+    if (existing.includes(d.mgmt_ip)) return;
+
+    _appendSwitchRow(type, {
+      name:        d.hostname || d.mgmt_ip,
+      host:        d.mgmt_ip,
+      device_type: d.device_type || 'cisco_ios',
+      os_type:     d.device_type || 'aruba_os',
+    });
+  });
+
+  // Show feedback
+  const msg = document.getElementById('settingsSaveMsg');
+  msg.textContent = `✓ Added ${selected.length} device${selected.length !== 1 ? 's' : ''} to inventory. Save to persist.`;
+  msg.className = 'settings-save-msg ok';
+  msg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 // ── Trace ─────────────────────────────────────────────────────
 async function doTrace() {
   const query = document.getElementById('searchInput').value.trim();

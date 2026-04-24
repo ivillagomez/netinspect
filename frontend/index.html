@@ -213,6 +213,80 @@
             </div>
           </div>
 
+          <!-- ── Discover from Seed ───────────────────────────── -->
+          <div class="settings-section">
+            <div class="settings-section-hd" onclick="toggleSettingsSection(this)">
+              <span>Discover from Seed</span>
+              <span class="disc-badge">CDP · LLDP</span>
+              <span class="settings-caret">›</span>
+            </div>
+            <div class="settings-section-bd">
+              <p class="settings-hint">SSH into a seed device and recursively walk CDP/LLDP neighbor tables to discover your switch inventory automatically.</p>
+              <div class="settings-grid-3">
+                <div class="settings-field">
+                  <label>Seed IP</label>
+                  <input id="disc_seed_ip" type="text" autocomplete="off" spellcheck="false" placeholder="192.168.1.10">
+                </div>
+                <div class="settings-field">
+                  <label>Scope CIDR (stay inside)</label>
+                  <input id="disc_scope" type="text" autocomplete="off" spellcheck="false" placeholder="10.0.0.0/8  (blank = allow all)">
+                </div>
+                <div class="settings-field settings-field--sm">
+                  <label>Max depth</label>
+                  <input id="disc_depth" type="number" value="5" min="1" max="10">
+                </div>
+              </div>
+              <p class="settings-hint" style="margin-top:2px">Uses <strong>Switch Authentication</strong> credentials above. Leave both blank to use those.</p>
+              <div class="settings-grid-3">
+                <div class="settings-field">
+                  <label>Username override</label>
+                  <input id="disc_username" type="text" autocomplete="off" spellcheck="false" placeholder="from Switch Auth">
+                </div>
+                <div class="settings-field">
+                  <label>Password override</label>
+                  <input id="disc_password" type="password" autocomplete="new-password" placeholder="from Switch Auth">
+                </div>
+                <div class="settings-field settings-field--sm">
+                  <label>Driver</label>
+                  <select id="disc_device_type">
+                    <option value="cisco_ios">cisco_ios</option>
+                    <option value="cisco_xe">cisco_xe</option>
+                    <option value="aruba_os">aruba_os</option>
+                    <option value="aruba_osix">aruba_osix</option>
+                  </select>
+                </div>
+              </div>
+              <button class="disc-start-btn" id="discStartBtn" onclick="startDiscovery()">
+                <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/></svg>
+                Start Discovery
+              </button>
+
+              <!-- Progress log -->
+              <div id="discProgress" class="disc-progress hidden">
+                <div class="disc-progress-hd">
+                  <span id="discProgressLabel">Discovering…</span>
+                  <button class="disc-stop-btn" id="discStopBtn" onclick="stopDiscovery()">Stop</button>
+                </div>
+                <div id="discLog" class="disc-log"></div>
+              </div>
+
+              <!-- Results checklist -->
+              <div id="discResults" class="disc-results hidden">
+                <div class="disc-results-hd">
+                  <span id="discResultsLabel">Found devices</span>
+                  <label class="disc-select-all">
+                    <input type="checkbox" id="discSelectAll" onchange="discToggleAll(this.checked)" checked>
+                    Select all
+                  </label>
+                </div>
+                <div id="discDeviceList" class="disc-device-list"></div>
+                <div class="disc-results-footer">
+                  <button class="settings-btn-save disc-add-btn" onclick="addDiscoveredDevices()">Add selected to inventory</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- ── Cisco Switches ────────────────────────────────── -->
           <div class="settings-section">
             <div class="settings-section-hd" onclick="toggleSettingsSection(this)">

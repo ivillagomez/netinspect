@@ -26,8 +26,9 @@ class FortiGateConfig(BaseModel):
 class CiscoSwitchConfig(BaseModel):
     name: str
     host: str
-    username: str
-    password: str
+    # username / password may be omitted when switch_credentials provides a global fallback
+    username: Optional[str] = None
+    password: Optional[str] = None
     device_type: str = "cisco_ios"
     timeout: int = 30
     # SNMP — optional fast path (replaces SSH for MAC lookup + interface stats)
@@ -61,8 +62,9 @@ class ServerConfig(BaseModel):
 class ArubaSwitchConfig(BaseModel):
     name: str
     host: str
-    username: str
-    password: str
+    # username / password may be omitted when switch_credentials provides a global fallback
+    username: Optional[str] = None
+    password: Optional[str] = None
     os_type: str = "aruba_os"   # "aruba_os" (2930/2930F/2930M) | "aruba_osix" (6000/6100)
     timeout: int = 30
 
@@ -154,6 +156,29 @@ def save_config(cfg: AppConfig, path: str = "config.yaml") -> None:
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
                   sort_keys=False)
+
+
+T = type  # used by fill_switch_creds below
+
+
+def fill_switch_creds(sw_cfg, global_creds: Optional[SwitchCredentials]):
+    """Return sw_cfg with username/password back-filled from global_creds where blank.
+
+    Does NOT mutate the original; returns a new model instance only when changes
+    are needed so callers can detect whether override happened.
+    """
+    if not global_creds:
+        return sw_cfg
+    needs_user = not sw_cfg.username
+    needs_pass = not sw_cfg.password
+    if not (needs_user or needs_pass):
+        return sw_cfg
+    data = sw_cfg.model_dump()
+    if needs_user:
+        data["username"] = global_creds.username
+    if needs_pass:
+        data["password"] = global_creds.password
+    return type(sw_cfg)(**data)
 
 
 def reset_config() -> None:

@@ -6,15 +6,17 @@ from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+import json
 from backend.config import (
     load_config, save_config, reset_config,
     AppConfig, FortiGateConfig, CiscoSwitchConfig, ArubaSwitchConfig,
     RuckusR1Config, ArubaCentralConfig, ExtremeIQConfig,
     ServerConfig, SwitchCredentials,
 )
+from backend.discovery.cdp_lldp import discover_from_seed
 from backend.models import TraceRequest, TraceResult
 from backend.tracer.mac_tracer import NetworkTracer
 
@@ -254,6 +256,74 @@ async def r1_test():
     return safe
 
 
+@app.post("/api/discover", dependencies=[Depends(verify_api_key)])
+async def discover(request: Request):
+    """Stream CDP/LLDP discovery progress as Server-Sent Events.
+
+    Request body:
+      seed_ip     str   — starting device IP
+      scope       str   — comma-separated CIDRs to stay inside (blank = allow all)
+      max_depth   int   — recursion depth limit (default 5)
+      credentials object — {username, password, device_type, timeout}
+                           Falls back to switch_credentials from config when omitted.
+    """
+    body = await request.json()
+
+    seed_ip   = (body.get("seed_ip") or "").strip()
+    scope_raw = (body.get("scope")   or "").strip()
+    max_depth = min(int(body.get("max_depth", 5)), 10)
+    scope     = [s.strip() for s in scope_raw.split(",") if s.strip()] if scope_raw else []
+
+    if not seed_ip:
+        raise HTTPException(status_code=400, detail="seed_ip is required")
+
+    # Resolve credentials: request body overrides global switch_credentials
+    creds_body = body.get("credentials") or {}
+    if creds_body.get("username") and creds_body.get("password"):
+        username    = creds_body["username"]
+        password    = creds_body["password"]
+        device_type = creds_body.get("device_type", "cisco_ios")
+        timeout     = int(creds_body.get("timeout", 15))
+    else:
+        cfg = load_config()
+        gc  = cfg.switch_credentials
+        if not gc or not gc.username or not gc.password:
+            raise HTTPException(
+                status_code=400,
+                detail="No credentials provided and no switch_credentials configured."
+            )
+        username    = gc.username
+        password    = gc.password
+        device_type = gc.device_type or "cisco_ios"
+        timeout     = gc.timeout or 15
+
+    async def event_stream():
+        try:
+            async for event in discover_from_seed(
+                seed_ip     = seed_ip,
+                username    = username,
+                password    = password,
+                device_type = device_type,
+                scope       = scope,
+                max_depth   = max_depth,
+                timeout     = timeout,
+            ):
+                yield event.to_sse()
+                await asyncio.sleep(0)   # yield control so client receives events promptly
+        except Exception as exc:
+            logger.error("Discovery error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'ip': seed_ip, 'reason': 'server error'})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":    "no-cache",
+            "X-Accel-Buffering": "no",   # disable nginx response buffering
+        },
+    )
+
+
 def _read_version() -> str:
     """Read the VERSION file from the project root. Falls back to 'unknown'."""
     candidates = [
@@ -348,17 +418,14 @@ async def put_settings(request: Request):
     for sw in body.get("cisco_switches", []):
         cur = cur_cisco.get(sw.get("name"))
         sw["password"] = _merge_secret(sw.get("password"), cur.password if cur else None)
-        # Fill username from global creds if blank
-        if not sw.get("username") and sw_creds_body:
-            sw["username"] = sw_creds_body.get("username", "")
+        # Keep username as-is — empty means "use global creds at runtime"
 
     # ── Aruba switches ─────────────────────────────────────────────────────────
     cur_aruba = {sw.name: sw for sw in current.aruba_switches}
     for sw in body.get("aruba_switches", []):
         cur = cur_aruba.get(sw.get("name"))
         sw["password"] = _merge_secret(sw.get("password"), cur.password if cur else None)
-        if not sw.get("username") and sw_creds_body:
-            sw["username"] = sw_creds_body.get("username", "")
+        # Keep username as-is — empty means "use global creds at runtime"
 
     # ── Cloud: Ruckus One ──────────────────────────────────────────────────────
     r1_body = body.get("ruckus_r1")

@@ -4,7 +4,7 @@ import re
 import time
 from typing import Optional, List, Dict, Any
 
-from backend.config import AppConfig
+from backend.config import AppConfig, fill_switch_creds
 from backend.connectors.fortigate import FortiGateClient, normalize_mac
 from backend.connectors.fortigate_ssh import FortiGateSSH
 from backend.connectors.cisco_ssh import CiscoSwitch
@@ -27,8 +27,10 @@ class NetworkTracer:
         self.config = config
         self.fg     = FortiGateClient(config.fortigate) if config.fortigate else None
         self.fg_ssh = FortiGateSSH(config.fortigate)    if config.fortigate else None
-        self.cisco_switches  = [CiscoSwitch(sw) for sw in config.cisco_switches]
-        self.aruba_switches  = [ArubaSwitch(sw) for sw in config.aruba_switches]
+        # Apply global switch_credentials as fallback for any switch missing username/password
+        gc = config.switch_credentials
+        self.cisco_switches  = [CiscoSwitch(fill_switch_creds(sw, gc))  for sw in config.cisco_switches]
+        self.aruba_switches  = [ArubaSwitch(fill_switch_creds(sw, gc))  for sw in config.aruba_switches]
         self.r1              = RuckusR1Client(config.ruckus_r1) if config.ruckus_r1 else None
         self.aruba_central   = ArubaCentralClient(config.aruba_central) if config.aruba_central else None
         self.extreme_iq      = ExtremeIQClient(config.extreme_iq) if config.extreme_iq else None
