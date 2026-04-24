@@ -101,6 +101,10 @@ const DEVICE_META = {
 // ── API key ───────────────────────────────────────────────────
 let _apiKey = sessionStorage.getItem('netinspect_api_key') || '';
 
+// ── Trace state ───────────────────────────────────────────────
+let _lastResult = null;   // most recent TraceResult JSON
+let _lastQuery  = '';     // most recent search query
+
 function apiHeaders(extra = {}) {
   const h = { ...extra };
   if (_apiKey) h['X-API-Key'] = _apiKey;
@@ -128,6 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('searchInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') doTrace();
   });
+  _renderHistoryPanel(_loadHistoryEntries());
 });
 
 async function initUI() {
@@ -765,6 +770,9 @@ async function doTrace() {
       throw new Error(err.detail || 'Server error');
     }
     const data = await res.json();
+    _lastResult = data;
+    _lastQuery  = query;
+    _saveToHistory(query, data);
     renderResults(data);
     setState('results');
   } catch (e) {
@@ -796,6 +804,13 @@ function showError(msg) {
 
 // ── Render results ────────────────────────────────────────────
 function renderResults(data) {
+  // Update print-only header
+  const _ph = document.getElementById('printHeaderMeta');
+  if (_ph) {
+    const _mac = data.resolved_mac ? `MAC: ${data.resolved_mac}` : '';
+    const _ip  = data.resolved_ip  ? `IP: ${data.resolved_ip}`   : '';
+    _ph.textContent = [_lastQuery, _mac, _ip, new Date().toLocaleString()].filter(Boolean).join('  ·  ');
+  }
   renderSummaryBar(data);
   renderPath(data.path || []);
   renderIssues(data.all_issues || []);
@@ -1452,4 +1467,162 @@ function esc(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ── CSV export ────────────────────────────────────────────────
+function downloadCsv() {
+  if (!_lastResult) return;
+  const rows = [];
+
+  // Header
+  rows.push(['Hop', 'Device Name', 'Type', 'IP', 'Vendor', 'Model', 'Version',
+    'VLAN', 'Ingress Port', 'Egress Port', 'Reachable',
+    'Issues', 'Tests Passed', 'Tests Failed', 'Tests Warning']);
+
+  // One row per hop
+  (_lastResult.path || []).forEach((hop, i) => {
+    const issues  = (hop.issues || []).map(is => `${is.severity}: ${is.message}`).join('; ');
+    const tests   = hop.tests || [];
+    const passed  = tests.filter(t => t.status === 'pass').length;
+    const failed  = tests.filter(t => t.status === 'fail').length;
+    const warning = tests.filter(t => t.status === 'warning').length;
+    rows.push([
+      i + 1,
+      hop.device_name      || '',
+      hop.device_type      || '',
+      hop.device_ip        || '',
+      hop.vendor           || '',
+      hop.model            || '',
+      hop.software_version || '',
+      hop.vlan             || '',
+      hop.ingress_port     || '',
+      hop.egress_port      || '',
+      hop.reachable != null ? (hop.reachable ? 'Yes' : 'No') : '',
+      issues,
+      passed,
+      failed,
+      warning,
+    ]);
+  });
+
+  // All issues appendix
+  const allIssues = _lastResult.all_issues || [];
+  if (allIssues.length) {
+    rows.push([]);
+    rows.push(['--- ALL ISSUES ---']);
+    rows.push(['Severity', 'Device', 'Message', 'Detail']);
+    allIssues.forEach(is => rows.push([
+      is.severity || '', is.device || '', is.message || '', is.detail || '',
+    ]));
+  }
+
+  // Serialise — RFC 4180 CSV with UTF-8 BOM for Excel
+  const csv = rows.map(row =>
+    row.map(cell => {
+      const s = String(cell ?? '');
+      return (s.includes(',') || s.includes('\n') || s.includes('"'))
+        ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(',')
+  ).join('\r\n');
+
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const ts   = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '');
+  const safe = _lastQuery.replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 40);
+  a.href     = url;
+  a.download = `netinspect_${safe}_${ts}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Trace history (localStorage) ─────────────────────────────
+const _HISTORY_KEY = 'netinspect_history';
+const _HISTORY_MAX = 20;
+
+function _saveToHistory(query, result) {
+  try {
+    const entries = _loadHistoryEntries();
+    const crits = (result.all_issues || []).filter(i => i.severity === 'critical').length;
+    const warns = (result.all_issues || []).filter(i => i.severity === 'warning').length;
+    entries.unshift({
+      id:           Date.now(),
+      query,
+      timestamp:    new Date().toISOString(),
+      resolved_mac: result.resolved_mac || '',
+      resolved_ip:  result.resolved_ip  || '',
+      status:       result.status || 'ok',
+      hop_count:    (result.path || []).length,
+      crit_count:   crits,
+      warn_count:   warns,
+      result,
+    });
+    if (entries.length > _HISTORY_MAX) entries.length = _HISTORY_MAX;
+    localStorage.setItem(_HISTORY_KEY, JSON.stringify(entries));
+    _renderHistoryPanel(entries);
+  } catch (_) { /* storage full or disabled — fail silently */ }
+}
+
+function _loadHistoryEntries() {
+  try { return JSON.parse(localStorage.getItem(_HISTORY_KEY) || '[]'); }
+  catch (_) { return []; }
+}
+
+function _renderHistoryPanel(entries) {
+  const panel = document.getElementById('historyPanel');
+  const list  = document.getElementById('historyList');
+  const count = document.getElementById('historyCount');
+  if (!panel) return;
+  if (!entries.length) { panel.style.display = 'none'; return; }
+
+  panel.style.display = '';
+  if (count) count.textContent = entries.length;
+  if (!list) return;
+  list.innerHTML = '';
+
+  entries.forEach(e => {
+    const icon = e.status === 'not_found' ? '🔍' : e.crit_count ? '🔴' : e.warn_count ? '⚠️' : '✅';
+    const ts   = new Date(e.timestamp).toLocaleString(undefined,
+      { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const meta = [ts, `${e.hop_count} hop${e.hop_count !== 1 ? 's' : ''}`,
+      e.resolved_ip || '', e.resolved_mac || ''].filter(Boolean).join('  ·  ');
+    const row = document.createElement('div');
+    row.className = 'history-row';
+    row.innerHTML =
+      `<span class="history-row-icon">${icon}</span>` +
+      `<div class="history-row-body">` +
+        `<div class="history-row-query">${esc(e.query)}</div>` +
+        `<div class="history-row-meta">${esc(meta)}</div>` +
+      `</div>` +
+      `<button class="history-row-load" onclick="loadHistoricTrace(${e.id})" title="Reload this trace">↩ Load</button>`;
+    list.appendChild(row);
+  });
+}
+
+function toggleHistory() {
+  const list  = document.getElementById('historyList');
+  const caret = document.getElementById('historyCaret');
+  if (!list) return;
+  const open = list.style.display === 'none';
+  list.style.display = open ? '' : 'none';
+  if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
+}
+
+function loadHistoricTrace(id) {
+  const entry = _loadHistoryEntries().find(e => e.id === id);
+  if (!entry) return;
+  _lastResult = entry.result;
+  _lastQuery  = entry.query;
+  document.getElementById('searchInput').value = entry.query;
+  renderResults(entry.result);
+  setState('results');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function clearHistory(event) {
+  event.stopPropagation();   // don't trigger toggleHistory
+  localStorage.removeItem(_HISTORY_KEY);
+  _renderHistoryPanel([]);
 }
