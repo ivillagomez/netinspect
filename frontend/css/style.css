@@ -725,6 +725,60 @@ body {
 [data-theme="light"] #themeIconSun  { display: none !important; }
 [data-theme="light"] #themeIconMoon { display: inline !important; }
 
+/* ── Header Settings button ──────────────────────────────────── */
+.header-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 15px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(0,200,255,0.35);
+  background: rgba(0,200,255,0.07);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: border-color var(--transition), background var(--transition);
+  font-family: inherit;
+}
+.header-settings-btn:hover {
+  background: rgba(0,200,255,0.14);
+  border-color: var(--accent);
+}
+[data-theme="light"] .header-settings-btn {
+  border-color: rgba(0,120,212,0.3);
+  background: rgba(0,120,212,0.07);
+}
+
+/* ── Vendor path chips (summary bar) ─────────────────────────── */
+.summary-vendors {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+.summary-vendors:empty { display: none; }
+.summary-vendor-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+.summary-vendor-arrow {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 1px;
+  user-select: none;
+}
+
 /* ── Settings open button (footer) ────────────────────────────── */
 .settings-open-btn {
   display: inline-flex;

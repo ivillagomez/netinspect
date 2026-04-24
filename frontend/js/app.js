@@ -74,6 +74,16 @@ const ICONS = {
 };
 
 // ── Constants ─────────────────────────────────────────────────
+const VENDOR_PATH_META = {
+  firewall:       { label: 'FortiGate',  color: 'var(--fw-color)'      },
+  cisco_switch:   { label: 'Cisco',      color: 'var(--sw-color)'      },
+  ruckus_switch:  { label: 'Ruckus ICX', color: 'var(--r1sw-color)'    },
+  ruckus_ap:      { label: 'Ruckus AP',  color: 'var(--ap-color)'      },
+  aruba_switch:   { label: 'Aruba',      color: 'var(--aruba-color)'   },
+  aruba_ap:       { label: 'Aruba AP',   color: 'var(--aruba-color)'   },
+  extreme_switch: { label: 'Extreme',    color: 'var(--extreme-color)' },
+};
+
 const DEVICE_META = {
   firewall:         { icon: ICONS.firewall,        label: 'Firewall',        cls: 'fw'       },
   cisco_switch:     { icon: ICONS.cisco_switch,    label: 'Cisco Switch',    cls: 'cisco_sw' },
@@ -154,14 +164,8 @@ function renderVendorBar(caps = {}) {
   if (caps.aruba_central)                          vendors.push({ label: 'Aruba Central', group: 'cloud'  });
   if (caps.extreme_iq)                             vendors.push({ label: 'XIQ',           group: 'cloud'  });
 
-  const el = document.getElementById('deviceSummary');
-  if (!vendors.length) {
-    el.innerHTML = '<span class="badge badge-neutral">No integrations configured</span>';
-    return;
-  }
-  el.innerHTML = vendors.map(v =>
-    `<span class="vendor-chip vendor-chip--${esc(v.group)}">${esc(v.label)}</span>`
-  ).join('');
+  // deviceSummary was moved to Settings button in header — no-op for visible chips
+  // (updateSearchHints below still uses `caps` to adjust placeholder / examples)
 }
 
 function updateSearchHints(caps = {}) {
@@ -831,6 +835,16 @@ function renderSummaryBar(data) {
   if (data.trace_time_ms) parts.push(`${data.trace_time_ms}ms`);
   metaEl.textContent = parts.join('  ·  ');
 
+  // Vendor path chips
+  const vendorsEl = document.getElementById('summaryVendors');
+  if (vendorsEl) {
+    const chips = _vendorPathFromHops(data.path || []);
+    vendorsEl.innerHTML = chips.map((c, i) =>
+      (i > 0 ? '<span class="summary-vendor-arrow">›</span>' : '') +
+      `<span class="summary-vendor-chip" style="color:${c.color}">${esc(c.label)}</span>`
+    ).join('');
+  }
+
   badgesEl.innerHTML = '';
   const crits = (data.all_issues || []).filter(i => i.severity === 'critical').length;
   const warns = (data.all_issues || []).filter(i => i.severity === 'warning').length;
@@ -840,6 +854,19 @@ function renderSummaryBar(data) {
   if (!crits && !warns) badgesEl.appendChild(mkBadge('✓ All clear', 'ok'));
   if (data.path) badgesEl.appendChild(mkBadge(`${data.path.length} hops`, 'neutral'));
   if (passes) badgesEl.appendChild(mkBadge(`${passes} tests passed`, 'ok'));
+}
+
+function _vendorPathFromHops(path) {
+  const chips = [];
+  let lastLabel = null;
+  for (const hop of path) {
+    const meta = VENDOR_PATH_META[hop.device_type];
+    if (!meta) continue;                      // skip client / unknown
+    if (meta.label === lastLabel) continue;   // deduplicate consecutive same-vendor hops
+    chips.push(meta);
+    lastLabel = meta.label;
+  }
+  return chips;
 }
 
 function renderPath(path) {
