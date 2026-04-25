@@ -6,7 +6,7 @@ uvicorn[standard]==0.44.0
 netmiko==4.6.0
 httpx==0.28.1
 pyyaml==6.0.3
-pydantic==2.12.5
+pydantic==2.13.3
 python-multipart==0.0.26
 puresnmp==2.0.1
 aiohttp>=3.9.0          # optional: Cisco RESTCONF + Aruba CX REST API
