@@ -9,4 +9,4 @@ pyyaml==6.0.3
 pydantic==2.12.5
 python-multipart==0.0.26
 puresnmp==2.0.1
-aiohttp>=3.9.0          # optional: Cisco RESTCONF + Aruba CX REST API
+aiohttp>=3.13.5          # optional: Cisco RESTCONF + Aruba CX REST API
