@@ -485,6 +485,21 @@ async function saveSettings() {
 
   try {
     const body = _collectSettings();
+
+    // ── Client-side validation ─────────────────────────────────
+    const warnings = [];
+    const fgToken   = document.getElementById('cfg_fg_token')?.value.trim();
+    const fgSshUser = document.getElementById('cfg_fg_ssh_user')?.value.trim();
+    if ((fgToken || fgSshUser) && !body.fortigate) {
+      warnings.push('FortiGate: Host / IP is required to save credentials.');
+    }
+    if (warnings.length) {
+      msg.textContent = '⚠ ' + warnings.join('  ');
+      msg.className = 'settings-save-msg err';
+      btn.disabled = false;
+      return;
+    }
+
     const res = await apiFetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
