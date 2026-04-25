@@ -40,7 +40,7 @@ If earlier development commits included real credentials before `.gitignore` was
 If you plan to expose NetInspect outside a trusted private LAN, take these steps first:
 
 1. **Set an API key** — Settings → Server → `api_key`. All API calls will require `X-API-Key: <your-key>`.
-2. **Lock down CORS** — Settings → Server → `allowed_origins`, e.g. `["https://netinspect.mycompany.com"]`. The default `"*"` is safe on a private LAN but allows any website to make API requests when internet-facing.
+2. **Lock down CORS** — Settings → Server → `allowed_origins`, e.g. `["https://netinspect.mycompany.com"]`. The default `"*"` is safe on a private LAN but allows any website to make API requests when internet-facing. **Note: CORS changes require a process restart to take effect** (the middleware is initialised at startup).
 3. **Put it behind a reverse proxy (nginx / Caddy / Traefik)** with TLS so credentials are encrypted in transit.
 4. **Restrict the firewall** — only allow HTTPS inbound from your intended users.
 

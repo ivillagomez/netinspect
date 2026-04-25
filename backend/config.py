@@ -165,7 +165,14 @@ def _find_config_path(path: str = "config.yaml") -> Optional[str]:
 def save_config(cfg: AppConfig, path: str = "config.yaml") -> None:
     """Persist an AppConfig back to the YAML file it was loaded from.
     If no config.yaml exists yet, creates one at the NETWORK_TRACER_CONFIG path
-    (if set) or at the project root."""
+    (if set) or at the project root.
+
+    Writes atomically (temp file → fsync → rename) and enforces 0600 permissions
+    so the credential-bearing file is never world- or group-readable.
+    """
+    import tempfile
+    import stat
+
     config_path = _find_config_path(path)
     if not config_path:
         # First save — respect env var (e.g. Docker named-volume path) before
@@ -180,11 +187,38 @@ def save_config(cfg: AppConfig, path: str = "config.yaml") -> None:
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             config_path = os.path.join(project_root, path)
         logger.info("Creating new config.yaml at %s", config_path)
+
     # Exclude None optional sections so the YAML stays clean
     data = cfg.model_dump(exclude_none=True)
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True,
-                  sort_keys=False)
+    content = yaml.dump(data, default_flow_style=False, allow_unicode=True,
+                        sort_keys=False)
+
+    # Atomic write: write to a temp file in the same directory, fsync, then
+    # rename so readers never see a partial file.
+    config_dir = os.path.dirname(os.path.abspath(config_path)) or "."
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)   # 0600
+            os.replace(tmp_path, config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        # Fallback for platforms where mkstemp/replace is not atomic (e.g. cross-device)
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        try:
+            os.chmod(config_path, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
 
 
 T = type  # used by fill_switch_creds below
