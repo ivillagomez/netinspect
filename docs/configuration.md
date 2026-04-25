@@ -47,13 +47,19 @@ aruba_switches:
 
 # ── Ruckus One (optional) ─────────────────────────────────────────────────────
 ruckus_r1:
-  base_url: "https://api.asia.ruckus.cloud"
+  # base_url is set automatically by the Region selector in the Settings UI.
+  # If editing config.yaml directly, use one of:
+  #   https://api.ruckus.cloud          (North America)
+  #   https://api.eu.ruckus.cloud       (Europe)
+  #   https://api.asia.ruckus.cloud     (Asia Pacific)
+  base_url: "https://api.ruckus.cloud"
   client_id: "YOUR_CLIENT_ID"
   client_secret: "YOUR_CLIENT_SECRET"
   tenant_id: "YOUR_TENANT_ID"
 
 # ── Aruba Central (optional) ──────────────────────────────────────────────────
 aruba_central:
+  # base_url is fixed — set automatically by the Settings UI.
   base_url: "https://apigw-prod2.central.arubanetworks.com"
   client_id: "YOUR_CLIENT_ID"
   client_secret: "YOUR_CLIENT_SECRET"
@@ -61,6 +67,7 @@ aruba_central:
 
 # ── ExtremeCloud IQ (optional) ────────────────────────────────────────────────
 extreme_iq:
+  # base_url is fixed — set automatically by the Settings UI.
   base_url: "https://extremecloudiq.com"
   api_key: "YOUR_API_KEY"
 
@@ -202,10 +209,7 @@ aruba_switches:
 2. Go to **Administration → Settings → Application Tokens**
 3. Create a new token → copy the **Client ID** and **Client Secret**
 4. Your **Tenant ID** is in the portal URL after login: `asia.ruckus.cloud/<tenantId>/...`
-5. Set `base_url` to your region's API domain:
-   - `https://api.asia.ruckus.cloud`
-   - `https://api.eu.ruckus.cloud`
-   - `https://api.ruckus.cloud`
+5. In Settings, select your **Region** (North America / Europe / Asia Pacific) — the API URL is set automatically.
 
 Tokens are fetched automatically via OAuth2 and cached for ~2 hours.
 
@@ -217,9 +221,7 @@ Tokens are fetched automatically via OAuth2 and cached for ~2 hours.
 2. Go to **Account Home → API Gateway → System Apps & Tokens**
 3. Create a new token → copy the **Client ID** and **Client Secret**
 4. Your **Customer ID** is under **Account Settings → Customer ID** or visible in the portal URL
-5. Set `base_url` to your regional endpoint (e.g. `https://apigw-prod2.central.arubanetworks.com` for US)
-
-Tokens are fetched and refreshed automatically via OAuth2.
+Tokens are fetched and refreshed automatically via OAuth2. The API endpoint is fixed and set automatically by the Settings UI.
 
 ---
 

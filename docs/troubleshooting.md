@@ -66,17 +66,13 @@
 ### Ruckus R1 returns no data
 - Confirm `client_id` and `client_secret` are correct (from **Administration → Settings → Application Tokens**)
 - Confirm `tenant_id` is set — find it in the portal URL after login: `asia.ruckus.cloud/<tenantId>/...`
-- Verify `base_url` matches your region:
-  - `https://api.asia.ruckus.cloud`
-  - `https://api.eu.ruckus.cloud`
-  - `https://api.ruckus.cloud`
+- Verify the correct **Region** is selected in Settings (North America / Europe / Asia Pacific)
 
 ### Ruckus AP shows no wired uplink port
 - Shown as `ETH0` (the universal Ruckus AP port) when the R1 API does not return an explicit port field. This is expected behavior.
 
 ### Aruba Central returns no data
 - Verify `client_id`, `client_secret`, and `customer_id` are correct and that the token has read access
-- Confirm `base_url` matches your regional gateway (e.g. `https://apigw-prod2.central.arubanetworks.com` for US)
 - Regenerate the token in **Account Home → API Gateway → System Apps & Tokens** if credentials have changed
 
 ### ExtremeCloud IQ returns no data
