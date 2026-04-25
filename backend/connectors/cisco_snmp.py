@@ -125,9 +125,9 @@ class CiscoSNMP:
         """
         results: Dict[str, object] = {}
         try:
-            async with Client(self.host, self._creds(), port=self.port) as c:
-                async for oid, value in c.bulkwalk(base_oid):
-                    results[str(oid)] = value
+            c = Client(self.host, self._creds(), port=self.port)
+            async for oid, value in c.bulkwalk(base_oid):
+                results[str(oid)] = value
         except Exception as e:
             logger.debug("SNMP walk %s@%s failed: %s", base_oid, self.host, e)
         return results
@@ -136,8 +136,8 @@ class CiscoSNMP:
         """Fetch multiple OIDs in a single GETMANY request."""
         results: Dict[str, object] = {}
         try:
-            async with Client(self.host, self._creds(), port=self.port) as c:
-                values = await c.multiget(oids)
+            c = Client(self.host, self._creds(), port=self.port)
+            values = await c.multiget(oids)
             for oid, value in zip(oids, values):
                 results[oid] = value
         except Exception as e:
@@ -231,8 +231,8 @@ class CiscoSNMP:
         if not HAS_SNMP:
             return False
         try:
-            async with Client(self.host, self._creds(), port=self.port) as c:
-                await c.get(OID_SYS_NAME)
+            c = Client(self.host, self._creds(), port=self.port)
+            await c.get(OID_SYS_NAME)
             return True
         except Exception:
             return False
@@ -294,8 +294,8 @@ class CiscoSNMP:
             found_port: Optional[int] = None
             found_vlan: Optional[int] = None
 
-            async with Client(self.host, self._creds(), port=self.port) as c:
-                async for oid, value in c.bulkwalk(OID_DOT1Q_FDB_PORT):
+            c = Client(self.host, self._creds(), port=self.port)
+            async for oid, value in c.bulkwalk(OID_DOT1Q_FDB_PORT):
                     idx = self._extract_index(str(oid), OID_DOT1Q_FDB_PORT)
                     if not idx or len(idx) < 7:
                         continue
