@@ -59,7 +59,13 @@ class FortiGateClient:
             msg = str(e)
             # Truncate and strip anything that looks like a token (long hex/base64 strings)
             safe_msg = re.sub(r'[A-Za-z0-9+/]{32,}', '***', msg)[:120]
-            logger.warning("FortiGate GET %s failed: %s — %s", path, type(e).__name__, safe_msg)
+            # 404 = endpoint/object not found — expected for address lookups that don't
+            # match, or optional monitor endpoints not available on this model/firmware.
+            # Log at DEBUG so routine "not found" cases don't pollute the terminal.
+            if "404" in safe_msg:
+                logger.debug("FortiGate GET %s: not found (404)", path)
+            else:
+                logger.warning("FortiGate GET %s failed: %s — %s", path, type(e).__name__, safe_msg)
             return None
 
     async def close(self):

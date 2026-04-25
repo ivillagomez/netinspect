@@ -83,6 +83,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# httpx logs every request at INFO — suppress to WARNING to keep the terminal clean
+# and avoid leaking full request URLs (which may contain query params) in production logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="NetInspect", version="1.0.0")
