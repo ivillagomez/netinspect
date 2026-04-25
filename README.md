@@ -1,5 +1,8 @@
 # NetInspect
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buy-me-a-coffee)](https://buymeacoffee.com/ivillagomez)
+
 Vendor-agnostic network path tracer and diagnostics platform. Enter a **MAC address**, **IP address**, or **FortiGate address object name** and get full end-to-end inspection across your firewall, switches, and wireless infrastructure — in your browser, no client install required.
 
 ![NetInspect](docs/screenshot.png)
@@ -56,16 +59,27 @@ python run.py
 
 ## Documentation
 
-| Topic | Link |
-|---|---|
-| Deployment options | [docs/deployment.md](docs/deployment.md) |
-| Configuration reference | [docs/configuration.md](docs/configuration.md) |
-| Usage guide | [docs/usage.md](docs/usage.md) |
-| Supported checks & diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
-| Architecture & API reference | [docs/architecture.md](docs/architecture.md) |
-| Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
-| Security notes | [docs/security.md](docs/security.md) |
-| Roadmap | [docs/roadmap.md](docs/roadmap.md) |
+Full documentation is available in the **[Wiki](https://github.com/ivillagomez/netinspect/wiki)** — including architecture diagrams, sequence flows, configuration reference, and troubleshooting guides.
+
+Quick links:
+
+| Topic | Wiki | In-repo |
+|---|---|---|
+| Deployment | [Wiki](https://github.com/ivillagomez/netinspect/wiki/Deployment) | [docs/deployment.md](docs/deployment.md) |
+| Configuration | [Wiki](https://github.com/ivillagomez/netinspect/wiki/Configuration) | [docs/configuration.md](docs/configuration.md) |
+| Usage guide | [Wiki](https://github.com/ivillagomez/netinspect/wiki/Usage-Guide) | [docs/usage.md](docs/usage.md) |
+| Architecture & diagrams | [Wiki](https://github.com/ivillagomez/netinspect/wiki/Architecture) | [docs/architecture.md](docs/architecture.md) |
+| Troubleshooting | [Wiki](https://github.com/ivillagomez/netinspect/wiki/Troubleshooting) | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Security | [Wiki](https://github.com/ivillagomez/netinspect/wiki/Security) | [docs/security.md](docs/security.md) |
+| Roadmap | [Wiki](https://github.com/ivillagomez/netinspect/wiki/Roadmap) | [docs/roadmap.md](docs/roadmap.md) |
+
+---
+
+## Support
+
+If NetInspect saves you time, consider buying me a coffee ☕
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/ivillagomez)
 
 ---
 
