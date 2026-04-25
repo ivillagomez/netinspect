@@ -35,6 +35,17 @@ If earlier development commits included real credentials before `.gitignore` was
 
 ---
 
+## Before exposing publicly (internet-facing)
+
+If you plan to expose NetInspect outside a trusted private LAN, take these steps first:
+
+1. **Set an API key** — Settings → Server → `api_key`. All API calls will require `X-API-Key: <your-key>`.
+2. **Lock down CORS** — Settings → Server → `allowed_origins`, e.g. `["https://netinspect.mycompany.com"]`. The default `"*"` is safe on a private LAN but allows any website to make API requests when internet-facing.
+3. **Put it behind a reverse proxy (nginx / Caddy / Traefik)** with TLS so credentials are encrypted in transit.
+4. **Restrict the firewall** — only allow HTTPS inbound from your intended users.
+
+---
+
 ## Optional API key for the web UI
 
 Set `server.api_key` in Settings (→ **Server** section) to require an `X-API-Key` header on all backend API calls. Useful when the tool is exposed beyond a trusted LAN segment.

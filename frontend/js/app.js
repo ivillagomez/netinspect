@@ -1075,7 +1075,7 @@ function renderIssues(issues) {
     const item = document.createElement('div');
     item.className = `issue-item ${issue.severity}`;
     item.innerHTML = `
-      <span class="issue-sev ${issue.severity}">${issue.severity}</span>
+      <span class="issue-sev ${issue.severity}">${esc(issue.severity)}</span>
       <div class="issue-body">
         ${issue.device ? `<div class="issue-device">${esc(issue.device)}</div>` : ''}
         <div class="issue-msg">${esc(issue.message)}</div>
@@ -1459,7 +1459,7 @@ function buildHopCard(hop, idx) {
       const item = document.createElement('div');
       item.className = `issue-item ${issue.severity}`;
       item.innerHTML = `
-        <span class="issue-sev ${issue.severity}">${issue.severity}</span>
+        <span class="issue-sev ${issue.severity}">${esc(issue.severity)}</span>
         <div class="issue-body">
           <div class="issue-msg">${esc(issue.message)}</div>
           ${issue.detail ? `<div class="issue-detail">${esc(issue.detail)}</div>` : ''}
