@@ -444,8 +444,12 @@
               <p class="settings-group-label">Ruckus One</p>
               <div class="settings-grid-3">
                 <div class="settings-field settings-field--wide">
-                  <label>Base URL</label>
-                  <input id="cfg_r1_url" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.asia.ruckus.cloud">
+                  <label>Region</label>
+                  <select id="cfg_r1_region">
+                    <option value="https://api.ruckus.cloud">North America</option>
+                    <option value="https://api.eu.ruckus.cloud">Europe</option>
+                    <option value="https://api.asia.ruckus.cloud">Asia Pacific</option>
+                  </select>
                 </div>
                 <div class="settings-field settings-field--sm">
                   <label>Tenant ID</label>
@@ -465,16 +469,10 @@
               <!-- Aruba Central -->
               <p class="settings-group-label" style="margin-top:16px">Aruba Central</p>
               <div class="settings-grid-3">
-                <div class="settings-field settings-field--wide">
-                  <label>Base URL</label>
-                  <input id="cfg_ac_url" type="text" autocomplete="off" spellcheck="false" placeholder="https://apigw-prod2.central.arubanetworks.com">
-                </div>
-                <div class="settings-field settings-field--sm">
+                <div class="settings-field">
                   <label>Customer ID</label>
                   <input id="cfg_ac_customer_id" type="text" autocomplete="off" spellcheck="false">
                 </div>
-              </div>
-              <div class="settings-grid-3">
                 <div class="settings-field">
                   <label>Client ID</label>
                   <input id="cfg_ac_client_id" type="text" autocomplete="off" spellcheck="false">
@@ -487,10 +485,6 @@
               <!-- ExtremeCloud IQ -->
               <p class="settings-group-label" style="margin-top:16px">ExtremeCloud IQ</p>
               <div class="settings-grid-3">
-                <div class="settings-field settings-field--wide">
-                  <label>Base URL</label>
-                  <input id="cfg_xiq_url" type="text" autocomplete="off" spellcheck="false" placeholder="https://extremecloudiq.com">
-                </div>
                 <div class="settings-field">
                   <label>API Key</label>
                   <input id="cfg_xiq_api_key" type="password" autocomplete="new-password" placeholder="unchanged">

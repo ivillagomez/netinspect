@@ -393,21 +393,19 @@ function _populateSettings(d) {
 
   // ── Ruckus One ─────────────────────────────────────────────
   const r1 = d.ruckus_r1 || {};
-  _setVal('cfg_r1_url',           r1.base_url      || '');
+  _setVal('cfg_r1_region',        r1.base_url      || 'https://api.ruckus.cloud');
   _setVal('cfg_r1_tenant',        r1.tenant_id     || '');
   _setVal('cfg_r1_client_id',     r1.client_id     || '');
   _setVal('cfg_r1_client_secret', r1.client_secret || '');
 
   // ── Aruba Central ──────────────────────────────────────────
   const ac = d.aruba_central || {};
-  _setVal('cfg_ac_url',           ac.base_url      || '');
   _setVal('cfg_ac_customer_id',   ac.customer_id   || '');
   _setVal('cfg_ac_client_id',     ac.client_id     || '');
   _setVal('cfg_ac_client_secret', ac.client_secret || '');
 
   // ── ExtremeCloud IQ ────────────────────────────────────────
   const xiq = d.extreme_iq || {};
-  _setVal('cfg_xiq_url',     xiq.base_url || '');
   _setVal('cfg_xiq_api_key', xiq.api_key  || '');
 
   // ── Server ─────────────────────────────────────────────────
@@ -565,11 +563,12 @@ function _collectSettings() {
   if (fortigate) Object.keys(fortigate).forEach(k => fortigate[k] === undefined && delete fortigate[k]);
 
   // ── Ruckus One ─────────────────────────────────────────────
-  const r1Url = v('cfg_r1_url');
-  const ruckus_r1 = r1Url ? {
-    base_url:      r1Url,
-    tenant_id:     v('cfg_r1_tenant')        || undefined,
-    client_id:     v('cfg_r1_client_id')     || undefined,
+  const r1ClientId = v('cfg_r1_client_id');
+  const r1Tenant   = v('cfg_r1_tenant');
+  const ruckus_r1 = (r1ClientId || r1Tenant) ? {
+    base_url:      v('cfg_r1_region') || 'https://api.ruckus.cloud',
+    tenant_id:     r1Tenant           || undefined,
+    client_id:     r1ClientId         || undefined,
     client_secret: v('cfg_r1_client_secret') || _MASKED,
   } : null;
   if (ruckus_r1) Object.keys(ruckus_r1).forEach(k => ruckus_r1[k] === undefined && delete ruckus_r1[k]);
@@ -577,17 +576,17 @@ function _collectSettings() {
   // ── Aruba Central ──────────────────────────────────────────
   const acClientId = v('cfg_ac_client_id');
   const aruba_central = acClientId ? {
-    base_url:      v('cfg_ac_url') || 'https://apigw-prod2.central.arubanetworks.com',
+    base_url:      'https://apigw-prod2.central.arubanetworks.com',
     customer_id:   v('cfg_ac_customer_id'),
     client_id:     acClientId,
     client_secret: v('cfg_ac_client_secret') || _MASKED,
   } : null;
 
   // ── ExtremeCloud IQ ────────────────────────────────────────
-  const xiqUrl = v('cfg_xiq_url');
-  const extreme_iq = xiqUrl ? {
-    base_url: xiqUrl,
-    api_key:  v('cfg_xiq_api_key') || _MASKED,
+  const xiqApiKey = v('cfg_xiq_api_key');
+  const extreme_iq = xiqApiKey ? {
+    base_url: 'https://extremecloudiq.com',
+    api_key:  xiqApiKey || _MASKED,
   } : null;
 
   // ── Server ─────────────────────────────────────────────────
