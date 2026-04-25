@@ -54,9 +54,12 @@ class FortiGateClient:
             r.raise_for_status()
             return r.json()
         except Exception as e:
-            # Log only the exception type, not the full message — URL params / headers
-            # in exception bodies could leak the Bearer token in future code paths.
-            logger.warning("FortiGate GET %s failed: %s", path, type(e).__name__)
+            # Log type + a safe excerpt of the message.
+            # Avoid logging the full URL or headers — they carry the Bearer token.
+            msg = str(e)
+            # Truncate and strip anything that looks like a token (long hex/base64 strings)
+            safe_msg = re.sub(r'[A-Za-z0-9+/]{32,}', '***', msg)[:120]
+            logger.warning("FortiGate GET %s failed: %s — %s", path, type(e).__name__, safe_msg)
             return None
 
     async def close(self):
