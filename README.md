@@ -1,6 +1,7 @@
 # NetInspect
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Docker Image](https://img.shields.io/badge/ghcr.io-netinspect-blue?logo=docker)](https://github.com/ivillagomez/netinspect/pkgs/container/netinspect)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buy-me-a-coffee)](https://buymeacoffee.com/ivillagomez)
 
 Vendor-agnostic network path tracer and diagnostics platform. Enter a **MAC address**, **IP address**, or **FortiGate address object name** and get full end-to-end inspection across your firewall, switches, and wireless infrastructure — in your browser, no client install required.
@@ -11,15 +12,21 @@ Vendor-agnostic network path tracer and diagnostics platform. Enter a **MAC addr
 
 ## Quick Start
 
-### Docker Compose _(recommended)_
+### Docker _(no clone required)_
+
+```bash
+docker run -d -p 8080:8080 -v netinspect_data:/app/data \
+  -e NETWORK_TRACER_CONFIG=/app/data/config.yaml \
+  --name netinspect ghcr.io/ivillagomez/netinspect:latest
+```
+
+### Docker Compose _(recommended for persistent deployments)_
 
 ```bash
 git clone https://github.com/ivillagomez/netinspect.git
 cd netinspect
 docker compose up -d --build
 ```
-
-Open **http://localhost:8080** → click **Settings** (top right) → add your devices → **Save**.
 
 ### Python (Windows / Linux)
 
@@ -29,6 +36,8 @@ cd netinspect
 pip install -r requirements.txt
 python run.py
 ```
+
+Open **http://localhost:8080** → click **Settings** (top right) → add your devices → **Save**.
 
 > See [Deployment options](docs/deployment.md) for Unraid, Linux VM, and other setups.
 
