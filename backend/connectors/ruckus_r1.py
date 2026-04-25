@@ -125,10 +125,11 @@ class RuckusR1Client:
                             # Do NOT log or return the response body on success —
                             # the body contains the JWT access token.
                             return token, r.status_code, ""
-                    # Non-success — log body snippet (no token present in failure responses)
-                    logger.info("R1 token [%s]: HTTP %s url=%s — %s",
-                                style, r.status_code, url, r.text[:300])
-                    return None, r.status_code, r.text[:300]
+                    # Non-success — do NOT log response body; auth servers may echo
+                    # back request fields (including credentials) in error responses.
+                    logger.info("R1 token [%s]: HTTP %s url=%s (response body redacted)",
+                                style, r.status_code, url)
+                    return None, r.status_code, f"HTTP {r.status_code} from token endpoint"
 
             except Exception as e:
                 last_error = f"{style}: exception — {e}"
@@ -168,9 +169,11 @@ class RuckusR1Client:
             if token:
                 return token
             if status not in (0, 404, 405):
-                # Got a real response (401, 400, etc.) — this is the right URL, wrong creds
+                # Got a real response (401, 400, etc.) — this is the right URL, wrong creds.
+                # Log status only; snippet may contain server-echoed request fields.
                 logger.error(
-                    "R1 token exchange at %s → HTTP %s: %s", url, status, snippet
+                    "R1 token exchange at %s → HTTP %s (check client_id / client_secret / tenant_id)",
+                    url, status,
                 )
                 return None
             # 404/405/0 = wrong endpoint, try next
