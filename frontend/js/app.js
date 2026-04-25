@@ -176,6 +176,8 @@ function initEventHandlers() {
     ?.addEventListener('click', closeSettings);
   document.getElementById('settingsSaveBtn')
     ?.addEventListener('click', saveSettings);
+  document.getElementById('settingsClearBtn')
+    ?.addEventListener('click', clearSettings);
 
   // ── Discovery ─────────────────────────────────────────────
   document.getElementById('disc_protocol')
@@ -447,7 +449,7 @@ function _appendSwitchRow(type, sw = {}, idx) {
       <input type="text" class="sw-name" value="${esc(sw.name || '')}" placeholder="core-sw-01" autocomplete="off" spellcheck="false">
     </div>
     <div class="settings-field"><label>Host / IP</label>
-      <input type="text" class="sw-host" value="${esc(sw.host || '')}" placeholder="192.168.1.10" autocomplete="off" spellcheck="false">
+      <input type="text" class="sw-host" value="${esc(sw.host || '')}" placeholder="e.g. 10.0.0.1" autocomplete="off" spellcheck="false">
     </div>
     <div class="settings-field settings-field--sm"><label>Username <span style="opacity:.5">(override)</span></label>
       <input type="text" class="sw-username" value="${esc(sw.username || '')}" placeholder="from global" autocomplete="off" spellcheck="false">
@@ -519,6 +521,15 @@ async function saveSettings() {
     // Scroll to message
     document.getElementById('settingsSaveMsg').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+}
+
+function clearSettings() {
+  const msg = document.getElementById('settingsSaveMsg');
+  if (!confirm('Clear ALL settings?\n\nThis will remove all configured devices and credentials from the form. Click Save Changes afterwards to write the empty config to disk.')) return;
+  _populateSettings({});
+  msg.textContent = 'All fields cleared — click Save Changes to apply.';
+  msg.className = 'settings-save-msg ok';
+  document.getElementById('settingsSaveMsg').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function _collectSettings() {

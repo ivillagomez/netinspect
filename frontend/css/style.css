@@ -1081,6 +1081,18 @@ body {
 }
 .settings-btn-save:hover   { opacity: 0.85; }
 .settings-btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+.settings-btn-clear {
+  background: none;
+  border: 1px solid rgba(239,68,68,0.4);
+  color: var(--crit);
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+  margin-right: auto;   /* pushes Cancel + Save to the right */
+}
+.settings-btn-clear:hover { border-color: var(--crit); background: rgba(239,68,68,0.08); }
 
 /* ── Discovery panel ───────────────────────────────────────────── */
 .disc-badge {
