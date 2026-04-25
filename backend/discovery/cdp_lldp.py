@@ -249,15 +249,15 @@ async def _snmp_cdp_walk(ip: str, creds, port: int) -> List[DiscoveredDevice]:
     """Walk Cisco CDP-MIB cdpCacheTable and return DiscoveredDevice list."""
     entries: Dict[tuple, Dict[int, object]] = {}
 
-    async with Client(ip, creds, port=port) as c:
-        async for oid, value in c.bulkwalk(OID_CDP_TABLE):
-            suffix = _oid_suffix(str(oid), OID_CDP_TABLE)
-            # suffix: [attr, ifIndex, neighborIndex]
-            if not suffix or len(suffix) < 3:
-                continue
-            attr, if_idx, nb_idx = suffix[0], suffix[1], suffix[2]
-            key = (if_idx, nb_idx)
-            entries.setdefault(key, {})[attr] = value
+    c = Client(ip, creds, port=port)
+    async for oid, value in c.bulkwalk(OID_CDP_TABLE):
+        suffix = _oid_suffix(str(oid), OID_CDP_TABLE)
+        # suffix: [attr, ifIndex, neighborIndex]
+        if not suffix or len(suffix) < 3:
+            continue
+        attr, if_idx, nb_idx = suffix[0], suffix[1], suffix[2]
+        key = (if_idx, nb_idx)
+        entries.setdefault(key, {})[attr] = value
 
     devices = []
     for _key, attrs in entries.items():
@@ -302,37 +302,37 @@ async def _snmp_lldp_walk(ip: str, creds, port: int) -> List[DiscoveredDevice]:
     port_ids:   Dict[tuple, str] = {}
     mgmt_ips:   Dict[tuple, str] = {}
 
-    async with Client(ip, creds, port=port) as c:
+    c = Client(ip, creds, port=port)
 
-        # lldpRemSysName  (.9.<timeFilter>.<localPortNum>.<remIndex>)
-        async for oid, value in c.bulkwalk(OID_LLDP_SYS_NAME):
-            s = _oid_suffix(str(oid), OID_LLDP_SYS_NAME)
-            if s and len(s) >= 3:
-                sys_names[(s[1], s[2])] = _decode_val(value)
+    # lldpRemSysName  (.9.<timeFilter>.<localPortNum>.<remIndex>)
+    async for oid, value in c.bulkwalk(OID_LLDP_SYS_NAME):
+        s = _oid_suffix(str(oid), OID_LLDP_SYS_NAME)
+        if s and len(s) >= 3:
+            sys_names[(s[1], s[2])] = _decode_val(value)
 
-        # lldpRemSysDesc
-        async for oid, value in c.bulkwalk(OID_LLDP_SYS_DESC):
-            s = _oid_suffix(str(oid), OID_LLDP_SYS_DESC)
-            if s and len(s) >= 3:
-                sys_descs[(s[1], s[2])] = _decode_val(value)[:80]
+    # lldpRemSysDesc
+    async for oid, value in c.bulkwalk(OID_LLDP_SYS_DESC):
+        s = _oid_suffix(str(oid), OID_LLDP_SYS_DESC)
+        if s and len(s) >= 3:
+            sys_descs[(s[1], s[2])] = _decode_val(value)[:80]
 
-        # lldpRemPortId
-        async for oid, value in c.bulkwalk(OID_LLDP_PORT_ID):
-            s = _oid_suffix(str(oid), OID_LLDP_PORT_ID)
-            if s and len(s) >= 3:
-                port_ids[(s[1], s[2])] = _decode_val(value)
+    # lldpRemPortId
+    async for oid, value in c.bulkwalk(OID_LLDP_PORT_ID):
+        s = _oid_suffix(str(oid), OID_LLDP_PORT_ID)
+        if s and len(s) >= 3:
+            port_ids[(s[1], s[2])] = _decode_val(value)
 
-        # lldpRemManAddrTable — IPv4 encoded in OID index:
-        # suffix: [timeFilter, localPortNum, remIndex, addrSubtype, addrLen, b1, b2, b3, b4]
-        async for oid, _value in c.bulkwalk(OID_LLDP_MGMT):
-            s = _oid_suffix(str(oid), OID_LLDP_MGMT)
-            if not s or len(s) < 9:
-                continue
-            # addrSubtype=1 → IPv4; addrLen=4
-            if s[3] != 1 or s[4] != 4:
-                continue
-            key = (s[1], s[2])
-            mgmt_ips[key] = ".".join(str(x) for x in s[5:9])
+    # lldpRemManAddrTable — IPv4 encoded in OID index:
+    # suffix: [timeFilter, localPortNum, remIndex, addrSubtype, addrLen, b1, b2, b3, b4]
+    async for oid, _value in c.bulkwalk(OID_LLDP_MGMT):
+        s = _oid_suffix(str(oid), OID_LLDP_MGMT)
+        if not s or len(s) < 9:
+            continue
+        # addrSubtype=1 → IPv4; addrLen=4
+        if s[3] != 1 or s[4] != 4:
+            continue
+        key = (s[1], s[2])
+        mgmt_ips[key] = ".".join(str(x) for x in s[5:9])
 
     devices = []
     for key, hostname in sys_names.items():
