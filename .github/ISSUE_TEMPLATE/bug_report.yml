@@ -1,0 +1,111 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail you provide, the faster it can be diagnosed.
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: NetInspect Version
+      description: Found in the top-right corner of the UI or `cat VERSION` in the repo
+      options:
+        - v1.3.1
+        - v1.3.0
+        - v1.2.0
+        - v1.1.0
+        - Other / unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Method
+      options:
+        - Docker Compose
+        - Python (direct)
+        - Unraid
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: What were you doing?
+      options:
+        - Running a trace
+        - Auto-Discovery
+        - Configuring Settings
+        - Viewing results / UI
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: integrations
+    attributes:
+      label: Which integration(s) are involved?
+      options:
+        - label: FortiGate
+        - label: Cisco (SSH)
+        - label: Cisco (RESTCONF)
+        - label: Aruba AOS-S
+        - label: Aruba AOS-CX (SSH)
+        - label: Aruba AOS-CX (REST)
+        - label: Ruckus One
+        - label: Aruba Central
+        - label: ExtremeCloud IQ
+        - label: Not integration-specific / UI only
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly. Include what you expected to happen vs what actually happened.
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Go to Settings → ...
+        2. Enter ...
+        3. Click ...
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Messages / Logs
+      description: Paste any error shown in the UI, or run `docker logs netinspect-tool` and paste the relevant output.
+      render: shell
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser (for UI issues)
+      options:
+        - Chrome / Edge (Chromium)
+        - Firefox
+        - Safari
+        - Not a UI issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Screenshots, config snippets (sanitized), or anything else that might help.

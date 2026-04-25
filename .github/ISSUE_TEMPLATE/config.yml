@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/ivillagomez/netinspect/wiki
+    about: Check the wiki first — configuration, troubleshooting, and architecture are all covered.
+  - name: Roadmap
+    url: https://github.com/ivillagomez/netinspect/wiki/Roadmap
+    about: See what's already planned before submitting a feature request.

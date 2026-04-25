@@ -1,0 +1,51 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea? Describe it below. Check the [Roadmap](https://github.com/ivillagomez/netinspect/wiki/Roadmap) first to see if it's already planned.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or pain point. A clear "I want to..." or "Currently I can't..." works great.
+      placeholder: Currently there's no way to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe what you'd like to see. UI mockups, example output, or step-by-step flow all help.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: integrations
+    attributes:
+      label: Which integration(s) does this relate to?
+      options:
+        - label: FortiGate
+        - label: Cisco
+        - label: Aruba (switches)
+        - label: Ruckus One
+        - label: Aruba Central
+        - label: ExtremeCloud IQ
+        - label: Not integration-specific (UI, export, general)
+        - label: New integration (specify below)
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any workarounds you're currently using, or other approaches you've thought about.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Screenshots, links, or anything else that helps explain the request.
