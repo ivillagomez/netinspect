@@ -1051,11 +1051,16 @@ body {
 .settings-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 10px;
   padding: 14px 22px;
   border-top: 1px solid var(--glass-border);
   flex-shrink: 0;
+}
+.settings-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .settings-btn-cancel {
   background: none;
@@ -1090,7 +1095,6 @@ body {
   font-size: 13px;
   cursor: pointer;
   transition: border-color var(--transition), background var(--transition);
-  margin-right: auto;   /* pushes Cancel + Save to the right */
 }
 .settings-btn-clear:hover { border-color: var(--crit); background: rgba(239,68,68,0.08); }
 
