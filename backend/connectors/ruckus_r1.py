@@ -124,10 +124,11 @@ class RuckusR1Client:
                             # Do NOT log or return the response body on success —
                             # the body contains the JWT access token.
                             return token, r.status_code, ""
-                    # Non-success — do NOT log r.status_code: CodeQL tracks
+                    # Do NOT log style or r.status_code: CodeQL tracks
+                    # client_secret → credential_styles (tuple) → style AND
                     # client_secret → post_kwargs → c.post() → r → r.status_code
-                    # as a sensitive-data path.  Log a literal instead.
-                    logger.info("R1 token [%s]: non-success response (body redacted)", style)
+                    # as sensitive-data paths.  Log a literal only.
+                    logger.info("R1 token: non-success response (body redacted)")
                     return None, r.status_code, f"HTTP {r.status_code} from token endpoint"
 
             except Exception as e:

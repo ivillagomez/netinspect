@@ -662,15 +662,18 @@ async def save_profile(name: str):
             status_code=400,
             detail="Invalid profile name. Use letters, digits, hyphens, underscores, or spaces (max 50 chars).",
         )
-    # Inline path construction so CodeQL can see the full sanitisation chain
-    # without having to look inside helper functions.
-    # os.path.basename() strips any path separators (recognised CodeQL barrier).
-    # profile_dir comes directly from _get_profiles_dir() — NOT derived from the
-    # user-supplied name — so tempfile.mkstemp/os.unlink on tmp_path are clean.
-    safe_name    = os.path.basename(name)
-    profiles_dir = _get_profiles_dir()
-    profile_file = os.path.join(profiles_dir, safe_name + ".yaml")
-    profile_dir  = profiles_dir   # use the known-clean dir, never os.path.dirname(profile_file)
+    # Canonical CodeQL path-injection fix: realpath() + startswith() guard.
+    # os.path.realpath normalises the path; the startswith check is the guard
+    # that CodeQL models as a PathSanitizer barrier.  profile_dir is set to the
+    # clean profiles_dir (never derived from user input) so that tmp_path from
+    # tempfile.mkstemp is also clean.
+    profiles_dir = os.path.realpath(_get_profiles_dir())
+    profile_file = os.path.realpath(
+        os.path.join(profiles_dir, os.path.basename(name) + ".yaml")
+    )
+    if not profile_file.startswith(profiles_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid profile name.")
+    profile_dir = profiles_dir
     try:
         cfg = load_config()
         content = yaml.dump(
@@ -705,8 +708,12 @@ async def load_profile_endpoint(name: str):
     """Load a named profile as the active config (replaces config.yaml)."""
     if not _PROFILE_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid profile name.")
-    safe_name    = os.path.basename(name)   # CodeQL path-injection barrier
-    profile_file = os.path.join(_get_profiles_dir(), safe_name + ".yaml")
+    profiles_dir = os.path.realpath(_get_profiles_dir())
+    profile_file = os.path.realpath(
+        os.path.join(profiles_dir, os.path.basename(name) + ".yaml")
+    )
+    if not profile_file.startswith(profiles_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid profile name.")
     if not os.path.isfile(profile_file):
         raise HTTPException(status_code=404, detail=f"Profile not found: {name!r}")
     try:
@@ -731,8 +738,12 @@ async def delete_profile_endpoint(name: str):
     """Permanently delete a saved profile."""
     if not _PROFILE_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid profile name.")
-    safe_name    = os.path.basename(name)   # CodeQL path-injection barrier
-    profile_file = os.path.join(_get_profiles_dir(), safe_name + ".yaml")
+    profiles_dir = os.path.realpath(_get_profiles_dir())
+    profile_file = os.path.realpath(
+        os.path.join(profiles_dir, os.path.basename(name) + ".yaml")
+    )
+    if not profile_file.startswith(profiles_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid profile name.")
     if not os.path.isfile(profile_file):
         raise HTTPException(status_code=404, detail=f"Profile not found: {name!r}")
     try:
