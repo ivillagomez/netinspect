@@ -654,7 +654,7 @@ async function activateProfile(name) {
     initUI();   // refresh capabilities bar
     _showProfileToast(`✓ Profile "${name}" loaded`);
   } catch (e) {
-    alert('Failed to load profile: ' + e.message);
+    _showProfileToast(`✗ Load failed: ${e.message}`, true);
   }
 }
 
@@ -663,8 +663,8 @@ async function saveAsProfile() {
   const raw = prompt('Profile name:\n(Letters, digits, hyphens, underscores, spaces — max 50 chars)');
   if (raw === null) return;   // cancelled
   const name = raw.trim();
-  if (!name) { alert('Profile name cannot be blank.'); return; }
-  if (name.length > 50) { alert('Profile name too long (max 50 characters).'); return; }
+  if (!name) { _showProfileToast('✗ Profile name cannot be blank.', true); return; }
+  if (name.length > 50) { _showProfileToast('✗ Profile name too long (max 50 chars).', true); return; }
   try {
     const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'POST' });
     const data = await res.json();
@@ -673,13 +673,12 @@ async function saveAsProfile() {
     _updateProfileBtnLabel();
     _showProfileToast(`✓ Profile "${name}" saved`);
   } catch (e) {
-    alert('Failed to save profile: ' + e.message);
+    _showProfileToast(`✗ Save failed: ${e.message}`, true);
   }
 }
 
 async function deleteProfile(name) {
-  closeProfileDropdown();   // close before confirm so the dropdown isn't visible behind dialog
-  if (!confirm(`Delete profile "${name}"?\n\nThis cannot be undone.`)) return;
+  closeProfileDropdown();
   try {
     const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
     const data = await res.json();
@@ -688,9 +687,10 @@ async function deleteProfile(name) {
       _activeProfileName = null;
       _updateProfileBtnLabel();
     }
+    _showProfileToast(`Profile "${name}" deleted`);
     loadProfiles();   // refresh dropdown list
   } catch (e) {
-    alert('Failed to delete profile: ' + e.message);
+    _showProfileToast(`✗ Delete failed: ${e.message}`, true);
   }
 }
 
@@ -704,7 +704,7 @@ function _updateProfileBtnLabel() {
   lbl.textContent = display;
 }
 
-function _showProfileToast(message) {
+function _showProfileToast(message, isError = false) {
   let toast = document.getElementById('profileToast');
   if (!toast) {
     toast = document.createElement('div');
@@ -713,6 +713,7 @@ function _showProfileToast(message) {
     document.querySelector('.app')?.appendChild(toast);
   }
   toast.textContent = message;
+  toast.classList.toggle('profile-toast--error', isError);
   toast.classList.add('profile-toast--visible');
   clearTimeout(toast._hideTimer);
   toast._hideTimer = setTimeout(() => toast.classList.remove('profile-toast--visible'), 3000);

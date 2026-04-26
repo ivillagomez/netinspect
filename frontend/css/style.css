@@ -919,6 +919,10 @@ body {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+.profile-toast--error {
+  color: var(--crit);
+  border-color: rgba(239,68,68,0.3);
+}
 
 /* Light theme overrides */
 [data-theme="light"] .profile-btn {
