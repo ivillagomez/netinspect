@@ -272,3 +272,25 @@ def reset_config() -> None:
     """Clear the cached singleton. Next call to load_config() re-reads from disk."""
     global _config
     _config = None
+
+
+def _get_profiles_dir() -> str:
+    """Return the profiles directory (sibling to config.yaml), creating it if needed.
+
+    Profiles are YAML snapshots of AppConfig stored in  <config_dir>/profiles/
+    Each file is named  <profile_name>.yaml  and written with 0600 permissions.
+    """
+    config_path = _find_config_path()
+    if config_path:
+        config_dir = os.path.dirname(os.path.abspath(config_path))
+    else:
+        # No config.yaml yet — mirror the logic in save_config() so profiles end
+        # up next to wherever the first save will create config.yaml.
+        env_path = os.environ.get("NETWORK_TRACER_CONFIG")
+        if env_path:
+            config_dir = os.path.dirname(os.path.abspath(env_path))
+        else:
+            config_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    profiles_dir = os.path.join(config_dir, "profiles")
+    os.makedirs(profiles_dir, exist_ok=True)
+    return profiles_dir

@@ -108,6 +108,9 @@ let _apiKey = sessionStorage.getItem('netinspect_api_key') || '';
 let _lastResult = null;   // most recent TraceResult JSON
 let _lastQuery  = '';     // most recent search query
 
+// ── Profile state ─────────────────────────────────────────────
+let _activeProfileName = null;   // name of last-loaded profile (null = unknown/modified)
+
 function apiHeaders(extra = {}) {
   const h = { ...extra };
   if (_apiKey) h['X-API-Key'] = _apiKey;
@@ -206,6 +209,18 @@ function initEventHandlers() {
   // ── No-config banner ──────────────────────────────────────
   document.getElementById('noConfigHintBtn')
     ?.addEventListener('click', openSettings);
+
+  // ── Profile selector ──────────────────────────────────────
+  document.getElementById('profileBtn')
+    ?.addEventListener('click', toggleProfileDropdown);
+  document.getElementById('profileSaveBtn')
+    ?.addEventListener('click', saveAsProfile);
+  // Close dropdown when clicking outside the selector
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('profileSelector')?.contains(e.target)) {
+      closeProfileDropdown();
+    }
+  });
 }
 
 async function initUI() {
@@ -511,6 +526,10 @@ async function saveSettings() {
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     msg.textContent = '✓ ' + data.message;
     msg.className = 'settings-save-msg ok';
+    // Config was modified — clear the active profile indicator so the button
+    // no longer shows a profile name that may no longer match what's on disk.
+    _activeProfileName = null;
+    _updateProfileBtnLabel();
     // Refresh capabilities bar since config changed
     initUI();
   } catch(e) {
@@ -530,6 +549,148 @@ function clearSettings() {
   msg.textContent = 'All fields cleared — click Save Changes to apply.';
   msg.className = 'settings-save-msg ok';
   document.getElementById('settingsSaveMsg').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── Config profiles ────────────────────────────────────────────
+
+function toggleProfileDropdown() {
+  const dd = document.getElementById('profileDropdown');
+  if (!dd) return;
+  if (dd.classList.contains('hidden')) {
+    loadProfiles();   // refresh list on open
+    dd.classList.remove('hidden');
+  } else {
+    dd.classList.add('hidden');
+  }
+}
+
+function closeProfileDropdown() {
+  document.getElementById('profileDropdown')?.classList.add('hidden');
+}
+
+async function loadProfiles() {
+  const list = document.getElementById('profileList');
+  if (!list) return;
+  try {
+    const res = await apiFetch('/api/profiles');
+    if (!res.ok) return;
+    const data = await res.json();
+    _renderProfileList(data.profiles || []);
+  } catch (_) { /* network error — silently skip */ }
+}
+
+function _renderProfileList(profiles) {
+  const list = document.getElementById('profileList');
+  const sep  = document.getElementById('profileDropdownSep');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (profiles.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'profile-empty';
+    empty.textContent = 'No profiles saved yet';
+    list.appendChild(empty);
+    if (sep) sep.style.display = 'none';
+    return;
+  }
+
+  if (sep) sep.style.display = '';
+  profiles.forEach(name => {
+    const isActive = name === _activeProfileName;
+    const item = document.createElement('div');
+    item.className = 'profile-item' + (isActive ? ' profile-item--active' : '');
+
+    const loadBtn = document.createElement('button');
+    loadBtn.className = 'profile-item-load';
+    loadBtn.title = isActive ? 'Currently active' : 'Load this profile';
+    loadBtn.innerHTML = esc(name) + (isActive ? ' <span class="profile-check">✓</span>' : '');
+    loadBtn.addEventListener('click', () => activateProfile(name));
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'profile-item-delete';
+    delBtn.title = 'Delete profile';
+    delBtn.textContent = '✕';
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteProfile(name); });
+
+    item.appendChild(loadBtn);
+    item.appendChild(delBtn);
+    list.appendChild(item);
+  });
+}
+
+async function activateProfile(name) {
+  closeProfileDropdown();
+  if (!confirm(`Switch to profile "${name}"?\n\nThe current active config will be replaced with the saved profile.`)) return;
+  try {
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}/load`, { method: 'PUT' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _activeProfileName = name;
+    _updateProfileBtnLabel();
+    initUI();   // refresh capabilities bar
+    _showProfileToast(`✓ Profile "${name}" loaded`);
+  } catch (e) {
+    alert('Failed to load profile: ' + e.message);
+  }
+}
+
+async function saveAsProfile() {
+  closeProfileDropdown();
+  const raw = prompt('Profile name:\n(Letters, digits, hyphens, underscores, spaces — max 50 chars)');
+  if (raw === null) return;   // cancelled
+  const name = raw.trim();
+  if (!name) { alert('Profile name cannot be blank.'); return; }
+  if (name.length > 50) { alert('Profile name too long (max 50 characters).'); return; }
+  try {
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _activeProfileName = name;
+    _updateProfileBtnLabel();
+    _showProfileToast(`✓ Profile "${name}" saved`);
+  } catch (e) {
+    alert('Failed to save profile: ' + e.message);
+  }
+}
+
+async function deleteProfile(name) {
+  if (!confirm(`Delete profile "${name}"?\n\nThis cannot be undone.`)) return;
+  try {
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (_activeProfileName === name) {
+      _activeProfileName = null;
+      _updateProfileBtnLabel();
+    }
+    loadProfiles();   // refresh dropdown list
+  } catch (e) {
+    alert('Failed to delete profile: ' + e.message);
+  }
+}
+
+function _updateProfileBtnLabel() {
+  const lbl = document.getElementById('profileBtnLabel');
+  if (!lbl) return;
+  // Truncate long names so the button stays compact
+  const display = _activeProfileName
+    ? (_activeProfileName.length > 20 ? _activeProfileName.slice(0, 18) + '…' : _activeProfileName)
+    : 'Profiles';
+  lbl.textContent = display;
+}
+
+function _showProfileToast(message) {
+  let toast = document.getElementById('profileToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'profileToast';
+    toast.className = 'profile-toast';
+    document.querySelector('.app')?.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('profile-toast--visible');
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(() => toast.classList.remove('profile-toast--visible'), 3000);
 }
 
 function _collectSettings() {

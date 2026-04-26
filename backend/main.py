@@ -5,7 +5,10 @@ import ipaddress
 import json
 import logging
 import os
+import pathlib
+import re
 import stat
+import tempfile
 import time as _time
 from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +16,9 @@ from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+import yaml
 from backend.config import (
-    load_config, save_config, reset_config, _find_config_path,
+    load_config, save_config, reset_config, _find_config_path, _get_profiles_dir,
     AppConfig, FortiGateConfig, CiscoSwitchConfig, ArubaSwitchConfig,
     RuckusR1Config, ArubaCentralConfig, ExtremeIQConfig,
     ServerConfig, SwitchCredentials,
@@ -22,6 +26,17 @@ from backend.config import (
 from backend.discovery.cdp_lldp import discover_from_seed
 from backend.models import TraceRequest, TraceResult
 from backend.tracer.mac_tracer import NetworkTracer
+
+# ── Profile name validation ────────────────────────────────────────────────────
+# Allowed: letters, digits, hyphens, underscores, spaces — max 50 chars.
+# This intentionally excludes path separators (/ \) and other shell-special chars.
+_PROFILE_NAME_RE = re.compile(r'^[\w\- ]{1,50}$')
+
+
+def _profile_path(name: str) -> str:
+    """Resolve the file path for a named profile. Name must be pre-validated."""
+    return os.path.join(_get_profiles_dir(), name + ".yaml")
+
 
 # ── Settings helpers ───────────────────────────────────────────────────────────
 
@@ -164,7 +179,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["X-API-Key", "Content-Type"],
 )
 
@@ -616,6 +631,101 @@ async def ui_config():
         "api_key_required": bool(cfg.server.api_key),
         "version": _read_version(),
     }
+
+
+# ── Config profiles ────────────────────────────────────────────────────────────
+
+@app.get("/api/profiles", dependencies=[Depends(verify_api_key)])
+async def list_profiles():
+    """List all saved config profile names (sorted A–Z)."""
+    try:
+        profiles_dir = _get_profiles_dir()
+        names = sorted(p.stem for p in pathlib.Path(profiles_dir).glob("*.yaml"))
+        return {"profiles": names}
+    except Exception as e:
+        logger.error("list_profiles error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list profiles")
+
+
+@app.post("/api/profiles/{name}", dependencies=[Depends(verify_api_key)])
+async def save_profile(name: str):
+    """Save the current active config as a named profile snapshot."""
+    if not _PROFILE_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid profile name. Use letters, digits, hyphens, underscores, or spaces (max 50 chars).",
+        )
+    try:
+        cfg = load_config()
+        content = yaml.dump(
+            cfg.model_dump(exclude_none=True),
+            default_flow_style=False, allow_unicode=True, sort_keys=False,
+        )
+        profile_file = _profile_path(name)
+        profile_dir  = os.path.dirname(profile_file)
+        fd, tmp_path = tempfile.mkstemp(dir=profile_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)   # 0600
+            os.replace(tmp_path, profile_file)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        logger.info("Config profile saved: %r", name)
+        return {"ok": True, "name": name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("save_profile error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save profile: {e}")
+
+
+@app.put("/api/profiles/{name}/load", dependencies=[Depends(verify_api_key)])
+async def load_profile_endpoint(name: str):
+    """Load a named profile as the active config (replaces config.yaml)."""
+    if not _PROFILE_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid profile name.")
+    profile_file = _profile_path(name)
+    if not os.path.isfile(profile_file):
+        raise HTTPException(status_code=404, detail=f"Profile not found: {name!r}")
+    try:
+        with open(profile_file, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        new_cfg = AppConfig(**data)   # validate before overwriting
+        save_config(new_cfg)
+        reset_config()
+        global _tracer
+        _tracer = None               # force tracer rebuild with new config
+        logger.info("Config profile loaded: %r", name)
+        return {"ok": True, "message": f"Profile '{name}' loaded. Changes take effect immediately."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("load_profile error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load profile: {e}")
+
+
+@app.delete("/api/profiles/{name}", dependencies=[Depends(verify_api_key)])
+async def delete_profile_endpoint(name: str):
+    """Permanently delete a saved profile."""
+    if not _PROFILE_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid profile name.")
+    profile_file = _profile_path(name)
+    if not os.path.isfile(profile_file):
+        raise HTTPException(status_code=404, detail=f"Profile not found: {name!r}")
+    try:
+        os.unlink(profile_file)
+        logger.info("Config profile deleted: %r", name)
+        return {"ok": True}
+    except Exception as e:
+        logger.error("delete_profile error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete profile: {e}")
 
 
 # ── Static frontend ────────────────────────────────────────────────────────────
