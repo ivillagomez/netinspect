@@ -126,7 +126,7 @@ class CiscoSNMP:
         results: Dict[str, object] = {}
         try:
             c = Client(self.host, self._creds(), port=self.port)
-            async for oid, value in c.bulkwalk(base_oid):
+            async for oid, value in c.bulkwalk([base_oid]):
                 results[str(oid)] = value
         except Exception as e:
             logger.debug("SNMP walk %s@%s failed: %s", base_oid, self.host, e)
@@ -295,7 +295,7 @@ class CiscoSNMP:
             found_vlan: Optional[int] = None
 
             c = Client(self.host, self._creds(), port=self.port)
-            async for oid, value in c.bulkwalk(OID_DOT1Q_FDB_PORT):
+            async for oid, value in c.bulkwalk([OID_DOT1Q_FDB_PORT]):
                     idx = self._extract_index(str(oid), OID_DOT1Q_FDB_PORT)
                     if not idx or len(idx) < 7:
                         continue
