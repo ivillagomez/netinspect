@@ -44,12 +44,12 @@
 | Print / PDF via browser print stylesheet |
 | Trace history (localStorage, up to 20 entries, instant reload) |
 | "No devices configured" banner with direct link to Settings |
+| **Per-customer config profiles** — save and switch between named configuration sets (devices, credentials, cloud APIs) without overwriting the active config; profiles stored as 0600 YAML snapshots in `profiles/` directory |
 
 ## Planned
 
 | Feature |
 |---|
-| **Per-customer config profiles** — save and switch between named configuration sets (devices, credentials, cloud APIs) without overwriting the active config. Useful for MSPs and consultants managing multiple environments from a single NetInspect instance. |
 | Saved trace history — comparison / diff between two traces |
 | FortiAnalyzer log correlation |
 | Email / Teams alert on critical issues |
