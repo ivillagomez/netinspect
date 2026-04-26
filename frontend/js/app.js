@@ -215,6 +215,10 @@ function initEventHandlers() {
     ?.addEventListener('click', toggleProfileDropdown);
   document.getElementById('profileSaveBtn')
     ?.addEventListener('click', saveAsProfile);
+  // Event delegation: one persistent listener on the list container handles
+  // all load/delete clicks even as items are re-rendered asynchronously.
+  document.getElementById('profileList')
+    ?.addEventListener('click', _handleProfileListClick);
   // Close dropdown when clicking outside the selector
   document.addEventListener('click', (e) => {
     if (!document.getElementById('profileSelector')?.contains(e.target)) {
@@ -595,6 +599,9 @@ function _renderProfileList(profiles) {
   }
 
   if (sep) sep.style.display = '';
+  // Use data-* attributes instead of per-element addEventListener so that
+  // the single delegated listener on #profileList (added in initEventHandlers)
+  // handles all clicks — this is robust against list re-renders.
   profiles.forEach(name => {
     const isActive = name === _activeProfileName;
     const item = document.createElement('div');
@@ -602,15 +609,17 @@ function _renderProfileList(profiles) {
 
     const loadBtn = document.createElement('button');
     loadBtn.className = 'profile-item-load';
+    loadBtn.dataset.profileAction = 'load';
+    loadBtn.dataset.profileName   = name;
     loadBtn.title = isActive ? 'Currently active' : 'Load this profile';
-    loadBtn.innerHTML = esc(name) + (isActive ? ' <span class="profile-check">✓</span>' : '');
-    loadBtn.addEventListener('click', () => activateProfile(name));
+    loadBtn.innerHTML = esc(name) + (isActive ? ' <span class="profile-check" style="pointer-events:none">✓</span>' : '');
 
     const delBtn = document.createElement('button');
     delBtn.className = 'profile-item-delete';
+    delBtn.dataset.profileAction = 'delete';
+    delBtn.dataset.profileName   = name;
     delBtn.title = 'Delete profile';
     delBtn.textContent = '✕';
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteProfile(name); });
 
     item.appendChild(loadBtn);
     item.appendChild(delBtn);
@@ -618,9 +627,24 @@ function _renderProfileList(profiles) {
   });
 }
 
+// Delegated click handler for the profile list — handles both load and delete.
+// Using delegation means only ONE listener lives on the static #profileList
+// element; it catches clicks on all dynamically rendered profile buttons.
+function _handleProfileListClick(e) {
+  const btn = e.target.closest('[data-profile-action]');
+  if (!btn) return;
+  e.stopPropagation();   // prevent the "outside click" document handler from firing
+  const action = btn.dataset.profileAction;
+  const name   = btn.dataset.profileName;
+  if (!name) return;
+  if (action === 'load')   activateProfile(name);
+  if (action === 'delete') deleteProfile(name);
+}
+
 async function activateProfile(name) {
   closeProfileDropdown();
-  if (!confirm(`Switch to profile "${name}"?\n\nThe current active config will be replaced with the saved profile.`)) return;
+  // No confirm() — the user deliberately chose this profile from the dropdown.
+  // The toast notification confirms what happened.
   try {
     const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}/load`, { method: 'PUT' });
     const data = await res.json();
@@ -654,6 +678,7 @@ async function saveAsProfile() {
 }
 
 async function deleteProfile(name) {
+  closeProfileDropdown();   // close before confirm so the dropdown isn't visible behind dialog
   if (!confirm(`Delete profile "${name}"?\n\nThis cannot be undone.`)) return;
   try {
     const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
