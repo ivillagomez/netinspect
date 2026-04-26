@@ -38,12 +38,21 @@
             <div class="profile-dropdown hidden" id="profileDropdown">
               <div id="profileList" class="profile-list"></div>
               <div class="profile-dropdown-sep" id="profileDropdownSep"></div>
+              <!-- Default: "Save as Profile…" trigger -->
               <button class="profile-save-btn" id="profileSaveBtn">
                 <svg viewBox="0 0 20 20" fill="currentColor" width="12" height="12">
                   <path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V6h5a2 2 0 012 2v7a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h5v5.586l-1.293-1.293zM9 4a1 1 0 012 0v2H9V4z"/>
                 </svg>
                 Save as Profile…
               </button>
+              <!-- Inline save form (shown when button clicked, no browser prompt) -->
+              <div class="profile-save-form hidden" id="profileSaveForm">
+                <input type="text" id="profileNameInput" class="profile-name-input"
+                  placeholder="Profile name…" maxlength="50"
+                  autocomplete="off" spellcheck="false">
+                <button class="profile-save-confirm" id="profileSaveConfirmBtn" title="Save">✓</button>
+                <button class="profile-save-cancel"  id="profileSaveCancelBtn"  title="Cancel">✕</button>
+              </div>
             </div>
           </div>
 

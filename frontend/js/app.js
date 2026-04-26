@@ -214,7 +214,16 @@ function initEventHandlers() {
   document.getElementById('profileBtn')
     ?.addEventListener('click', toggleProfileDropdown);
   document.getElementById('profileSaveBtn')
-    ?.addEventListener('click', saveAsProfile);
+    ?.addEventListener('click', _openSaveProfileForm);
+  document.getElementById('profileSaveConfirmBtn')
+    ?.addEventListener('click', _confirmSaveProfile);
+  document.getElementById('profileSaveCancelBtn')
+    ?.addEventListener('click', _cancelSaveProfileForm);
+  document.getElementById('profileNameInput')
+    ?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  _confirmSaveProfile();
+      if (e.key === 'Escape') _cancelSaveProfileForm();
+    });
   // Event delegation: one persistent listener on the list container handles
   // all load/delete clicks even as items are re-rendered asynchronously.
   document.getElementById('profileList')
@@ -570,6 +579,7 @@ function toggleProfileDropdown() {
 
 function closeProfileDropdown() {
   document.getElementById('profileDropdown')?.classList.add('hidden');
+  _cancelSaveProfileForm();   // always reset inline form so it's clean on next open
 }
 
 async function loadProfiles() {
@@ -651,6 +661,9 @@ async function activateProfile(name) {
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     _activeProfileName = name;
     _updateProfileBtnLabel();
+    // Clear trace history — it belongs to the previous environment, not this profile.
+    localStorage.removeItem(_HISTORY_KEY);
+    _renderHistoryPanel([]);
     initUI();   // refresh capabilities bar
     _showProfileToast(`✓ Profile "${name}" loaded`);
   } catch (e) {
@@ -658,13 +671,31 @@ async function activateProfile(name) {
   }
 }
 
-async function saveAsProfile() {
+function _openSaveProfileForm() {
+  // Swap the "Save as Profile…" button for the inline name input — no prompt() needed.
+  document.getElementById('profileSaveBtn')?.classList.add('hidden');
+  const form = document.getElementById('profileSaveForm');
+  form?.classList.remove('hidden');
+  const input = document.getElementById('profileNameInput');
+  if (input) { input.value = ''; input.focus(); }
+}
+
+function _cancelSaveProfileForm() {
+  document.getElementById('profileSaveForm')?.classList.add('hidden');
+  document.getElementById('profileSaveBtn')?.classList.remove('hidden');
+}
+
+async function _confirmSaveProfile() {
+  const input = document.getElementById('profileNameInput');
+  const name  = (input?.value || '').trim();
+  if (!name) { input?.focus(); return; }
+  if (name.length > 50) {
+    _showProfileToast('✗ Profile name too long (max 50 chars).', true);
+    input?.focus();
+    return;
+  }
+  _cancelSaveProfileForm();   // reset UI immediately
   closeProfileDropdown();
-  const raw = prompt('Profile name:\n(Letters, digits, hyphens, underscores, spaces — max 50 chars)');
-  if (raw === null) return;   // cancelled
-  const name = raw.trim();
-  if (!name) { _showProfileToast('✗ Profile name cannot be blank.', true); return; }
-  if (name.length > 50) { _showProfileToast('✗ Profile name too long (max 50 chars).', true); return; }
   try {
     const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'POST' });
     const data = await res.json();
@@ -676,6 +707,9 @@ async function saveAsProfile() {
     _showProfileToast(`✗ Save failed: ${e.message}`, true);
   }
 }
+
+// saveAsProfile kept as a no-op alias so any stale references don't crash
+function saveAsProfile() { _openSaveProfileForm(); }
 
 async function deleteProfile(name) {
   closeProfileDropdown();

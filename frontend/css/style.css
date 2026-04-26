@@ -877,6 +877,59 @@ body {
   margin: 2px 0;
 }
 
+/* Inline save-as-profile form (replaces the button when clicked) */
+.profile-save-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+}
+.profile-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  background: var(--glass);
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+}
+.profile-name-input:focus { border-color: var(--accent2); }
+.profile-save-confirm,
+.profile-save-cancel {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition);
+}
+.profile-save-confirm {
+  background: rgba(124,92,252,0.15);
+  color: var(--accent2);
+}
+.profile-save-confirm:hover { background: rgba(124,92,252,0.28); }
+.profile-save-cancel  {
+  background: none;
+  color: var(--text-muted);
+}
+.profile-save-cancel:hover  { background: var(--glass-hover); color: var(--text); }
+
+[data-theme="light"] .profile-name-input {
+  background: #f8fafc;
+  border-color: #d1d5db;
+  color: #1e293b;
+}
+[data-theme="light"] .profile-name-input:focus { border-color: var(--accent2); }
+
 /* Save as Profile button */
 .profile-save-btn {
   display: flex;
