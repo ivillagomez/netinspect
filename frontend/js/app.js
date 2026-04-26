@@ -651,6 +651,20 @@ function _handleProfileListClick(e) {
   if (action === 'delete') deleteProfile(name);
 }
 
+function _resetTraceUI() {
+  // Clear search box and in-memory trace state
+  const input = document.getElementById('searchInput');
+  if (input) input.value = '';
+  _lastResult = null;
+  _lastQuery  = '';
+  // Hide results, loading, and error panels
+  document.getElementById('resultsSection')?.classList.add('hidden');
+  document.getElementById('loadingState')?.classList.add('hidden');
+  document.getElementById('errorState')?.classList.add('hidden');
+  // Scroll back to top so the search box is immediately visible
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 async function activateProfile(name) {
   closeProfileDropdown();
   // No confirm() — the user deliberately chose this profile from the dropdown.
@@ -661,6 +675,8 @@ async function activateProfile(name) {
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     _activeProfileName = name;
     _updateProfileBtnLabel();
+    // Reset the UI completely — a different profile is a different environment.
+    _resetTraceUI();
     // Clear trace history — it belongs to the previous environment, not this profile.
     localStorage.removeItem(_HISTORY_KEY);
     _renderHistoryPanel([]);
