@@ -18,21 +18,6 @@ from backend.config import RuckusR1Config
 
 logger = logging.getLogger(__name__)
 
-_TOKEN_PATH_RE = re.compile(r'(/token)/[^/?#]+', re.IGNORECASE)
-
-
-def _redact_token_url(url: str) -> str:
-    """Replace the tenant-ID segment of an OAuth2 token URL before logging.
-
-    e.g. https://asia.ruckus.cloud/oauth2/token/abc-123
-      →  https://asia.ruckus.cloud/oauth2/token/[redacted]
-
-    This avoids CodeQL py/clear-text-logging-sensitive-data alerts while
-    keeping enough context for debugging (base URL + HTTP status).
-    """
-    return _TOKEN_PATH_RE.sub(r'\1/[redacted]', url)
-
-
 def normalize_mac(mac: str) -> str:
     return re.sub(r"[.:\-]", "", mac).lower()
 
@@ -139,11 +124,10 @@ class RuckusR1Client:
                             # Do NOT log or return the response body on success —
                             # the body contains the JWT access token.
                             return token, r.status_code, ""
-                    # Non-success — do NOT log response body; auth servers may echo
-                    # back request fields (including credentials) in error responses.
-                    # Redact tenant-ID from URL before logging (CodeQL py/clear-text-logging-sensitive-data).
-                    logger.info("R1 token [%s]: HTTP %s url=%s (response body redacted)",
-                                style, r.status_code, _redact_token_url(url))
+                    # Non-success — log status only.  Do NOT log the URL (contains
+                    # tenant-ID) or the response body (may echo request credentials).
+                    logger.info("R1 token [%s]: HTTP %s (response body redacted)",
+                                style, r.status_code)
                     return None, r.status_code, f"HTTP {r.status_code} from token endpoint"
 
             except Exception as e:
@@ -185,10 +169,10 @@ class RuckusR1Client:
                 return token
             if status not in (0, 404, 405):
                 # Got a real response (401, 400, etc.) — this is the right URL, wrong creds.
-                # Redact tenant-ID from URL before logging (CodeQL py/clear-text-logging-sensitive-data).
+                # Log status only; do NOT log the URL (contains tenant-ID).
                 logger.error(
-                    "R1 token exchange at %s → HTTP %s (check client_id / client_secret / tenant_id)",
-                    _redact_token_url(url), status,
+                    "R1 token exchange: HTTP %s — check client_id / client_secret / tenant_id",
+                    status,
                 )
                 return None
             # 404/405/0 = wrong endpoint, try next

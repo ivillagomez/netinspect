@@ -662,6 +662,10 @@ async def save_profile(name: str):
             status_code=400,
             detail="Invalid profile name. Use letters, digits, hyphens, underscores, or spaces (max 50 chars).",
         )
+    # os.path.basename() is a CodeQL-recognised path-injection barrier.
+    # Applied here (at the taint source) so the sanitisation is visible to
+    # CodeQL's intra-procedural analysis, not hidden inside a helper call.
+    name = os.path.basename(name)
     try:
         cfg = load_config()
         content = yaml.dump(
@@ -698,6 +702,7 @@ async def load_profile_endpoint(name: str):
     """Load a named profile as the active config (replaces config.yaml)."""
     if not _PROFILE_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid profile name.")
+    name = os.path.basename(name)   # CodeQL path-injection barrier (see save_profile)
     profile_file = _profile_path(name)
     if not os.path.isfile(profile_file):
         raise HTTPException(status_code=404, detail=f"Profile not found: {name!r}")
@@ -723,6 +728,7 @@ async def delete_profile_endpoint(name: str):
     """Permanently delete a saved profile."""
     if not _PROFILE_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid profile name.")
+    name = os.path.basename(name)   # CodeQL path-injection barrier (see save_profile)
     profile_file = _profile_path(name)
     if not os.path.isfile(profile_file):
         raise HTTPException(status_code=404, detail=f"Profile not found: {name!r}")
