@@ -34,8 +34,15 @@ _PROFILE_NAME_RE = re.compile(r'^[\w\- ]{1,50}$')
 
 
 def _profile_path(name: str) -> str:
-    """Resolve the file path for a named profile. Name must be pre-validated."""
-    return os.path.join(_get_profiles_dir(), name + ".yaml")
+    """Resolve the file path for a named profile. Name must be pre-validated.
+
+    os.path.basename() is used as an explicit path sanitizer so CodeQL's
+    py/path-injection taint-tracker sees a recognised barrier.  The name is
+    already constrained to ^[\\w\\- ]{1,50}$ (no path separators), but the
+    regex alone is not modelled as a sanitiser by CodeQL.
+    """
+    safe_name = os.path.basename(name)           # strip any path separators
+    return os.path.join(_get_profiles_dir(), safe_name + ".yaml")
 
 
 # ── Settings helpers ───────────────────────────────────────────────────────────
