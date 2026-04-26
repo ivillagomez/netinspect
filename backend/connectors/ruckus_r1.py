@@ -124,10 +124,10 @@ class RuckusR1Client:
                             # Do NOT log or return the response body on success —
                             # the body contains the JWT access token.
                             return token, r.status_code, ""
-                    # Non-success — log status only.  Do NOT log the URL (contains
-                    # tenant-ID) or the response body (may echo request credentials).
-                    logger.info("R1 token [%s]: HTTP %s (response body redacted)",
-                                style, r.status_code)
+                    # Non-success — do NOT log r.status_code: CodeQL tracks
+                    # client_secret → post_kwargs → c.post() → r → r.status_code
+                    # as a sensitive-data path.  Log a literal instead.
+                    logger.info("R1 token [%s]: non-success response (body redacted)", style)
                     return None, r.status_code, f"HTTP {r.status_code} from token endpoint"
 
             except Exception as e:
@@ -168,11 +168,11 @@ class RuckusR1Client:
             if token:
                 return token
             if status not in (0, 404, 405):
-                # Got a real response (401, 400, etc.) — this is the right URL, wrong creds.
-                # Log status only; do NOT log the URL (contains tenant-ID).
+                # Got a real response (4xx/5xx) — right URL, wrong creds.
+                # Do NOT log status: CodeQL tracks client_secret → c.post() → r
+                # → r.status_code → return value → status as a sensitive-data path.
                 logger.error(
-                    "R1 token exchange: HTTP %s — check client_id / client_secret / tenant_id",
-                    status,
+                    "R1 token exchange failed — check client_id / client_secret / tenant_id"
                 )
                 return None
             # 404/405/0 = wrong endpoint, try next
