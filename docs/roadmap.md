@@ -49,6 +49,7 @@
 
 | Feature |
 |---|
+| **Per-customer config profiles** — save and switch between named configuration sets (devices, credentials, cloud APIs) without overwriting the active config. Useful for MSPs and consultants managing multiple environments from a single NetInspect instance. |
 | Saved trace history — comparison / diff between two traces |
 | FortiAnalyzer log correlation |
 | Email / Teams alert on critical issues |
