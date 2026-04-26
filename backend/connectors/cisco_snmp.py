@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 try:
     from puresnmp import Client
     from puresnmp.credentials import V2C, V1
+    from x690.types import ObjectIdentifier as OID
     HAS_SNMP = True
 except ImportError:
     HAS_SNMP = False
@@ -126,7 +127,7 @@ class CiscoSNMP:
         results: Dict[str, object] = {}
         try:
             c = Client(self.host, self._creds(), port=self.port)
-            async for oid, value in c.bulkwalk([base_oid]):
+            async for oid, value in c.bulkwalk([OID(base_oid)]):
                 results[str(oid)] = value
         except Exception as e:
             logger.debug("SNMP walk %s@%s failed: %s", base_oid, self.host, e)
@@ -137,7 +138,7 @@ class CiscoSNMP:
         results: Dict[str, object] = {}
         try:
             c = Client(self.host, self._creds(), port=self.port)
-            values = await c.multiget(oids)
+            values = await c.multiget([OID(o) for o in oids])
             for oid, value in zip(oids, values):
                 results[oid] = value
         except Exception as e:
@@ -232,7 +233,7 @@ class CiscoSNMP:
             return False
         try:
             c = Client(self.host, self._creds(), port=self.port)
-            await c.get(OID_SYS_NAME)
+            await c.get(OID(OID_SYS_NAME))
             return True
         except Exception:
             return False
@@ -295,7 +296,7 @@ class CiscoSNMP:
             found_vlan: Optional[int] = None
 
             c = Client(self.host, self._creds(), port=self.port)
-            async for oid, value in c.bulkwalk([OID_DOT1Q_FDB_PORT]):
+            async for oid, value in c.bulkwalk([OID(OID_DOT1Q_FDB_PORT)]):
                     idx = self._extract_index(str(oid), OID_DOT1Q_FDB_PORT)
                     if not idx or len(idx) < 7:
                         continue
