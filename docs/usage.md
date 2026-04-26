@@ -131,6 +131,40 @@ Each entry shows a status icon, the original query, hop count, resolved IP and M
 
 ---
 
+## Config Profiles
+
+Config Profiles let you save and restore complete configuration snapshots — useful when you manage multiple sites, customers, or environments from the same NetInspect instance.
+
+### Saving a profile
+
+1. Configure your settings (Settings → **Save Changes**)
+2. Click the **Profiles** button in the top-right header
+3. Click **Save as Profile…** in the dropdown
+4. Type a name (letters, digits, hyphens, underscores, spaces — max 50 characters) and press **Enter** or click **✓**
+5. A toast notification confirms the save — the Profiles button label updates to the active profile name
+
+### Loading a profile
+
+1. Click the **Profiles** button
+2. Click a profile name in the dropdown
+3. The active config is replaced immediately — all credentials, switches, and cloud APIs switch to the saved values
+4. The results panel, search input, and trace history are cleared (clean slate for the new environment)
+
+### Deleting a profile
+
+1. Click the **Profiles** button
+2. Click the **✕** icon next to the profile you want to remove
+3. The profile is deleted immediately (no confirmation — use with care)
+
+### Notes
+
+- Profiles are stored as separate YAML files in a `profiles/` directory next to `config.yaml` — they are not embedded in `config.yaml` itself
+- A snapshot is taken at save time — changes made after saving do not update the profile automatically; save again to refresh it
+- The Profiles button clears its label when Settings are saved directly, since the active config may have diverged from the snapshot
+- Trace history is cleared when switching profiles (history is environment-specific)
+
+---
+
 ## Theme
 
 Click the **sun/moon button in the footer** to toggle between dark and light themes. The preference persists across sessions via `localStorage`.

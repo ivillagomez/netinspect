@@ -243,3 +243,23 @@ Tokens can expire — regenerate from Global Settings if the integration stops r
 | `port` | `8080` | HTTP port |
 | `api_key` | _(none)_ | Optional: require `X-API-Key` header on all API calls |
 | `allowed_origins` | `[]` (allow all) | Restrict CORS for non-LAN deployments |
+
+---
+
+## Config Profiles
+
+Config Profiles are named snapshots of the full `config.yaml`. They are managed entirely through the **Profiles** button in the UI — there is nothing to edit in `config.yaml` directly.
+
+Profiles are stored as separate YAML files in a `profiles/` directory next to `config.yaml`:
+
+```
+/app/data/
+  config.yaml          ← active configuration
+  profiles/
+    Site-A.yaml        ← saved profile
+    Customer-B.yaml    ← saved profile
+```
+
+Each profile file is written atomically with `0600` permissions (owner read/write only), the same as `config.yaml`.
+
+See the [Usage Guide](usage.md) for how to save, load, and delete profiles from the UI.
