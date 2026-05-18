@@ -2,7 +2,7 @@
 # To update: bump versions here, rebuild, re-test, then commit.
 # Run `pip install -r requirements.txt` to install.
 fastapi==0.136.1
-uvicorn[standard]==0.46.0
+uvicorn[standard]==0.47.0
 netmiko==4.6.0
 httpx==0.28.1
 pyyaml==6.0.3
